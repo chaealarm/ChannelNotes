@@ -40,6 +40,7 @@ $("#app").innerHTML = `<div class="shell"><aside class="rail"><button class="set
 $("#export").textContent = "다른 위치에 저장";
 $("#export").insertAdjacentHTML("beforebegin", '<button id="import">불러오기</button>');
 $("#import").insertAdjacentHTML("beforebegin", '<button id="manualSave">저장</button>');
+$("#manualSave").insertAdjacentHTML("beforebegin", '<button id="openSearch">검색</button>');
 $("footer span:last-child").remove();
 $("#addNote").title = "카테고리 추가";
 $(".settings-actions").insertAdjacentHTML("afterend",'<div class="group-data"><label>그룹 백업·복원</label><select id="groupDataSelect"></select><div><button id="backupGroup">선택 그룹 백업</button><button id="restoreGroup">그룹 복원</button></div></div>');
@@ -47,6 +48,7 @@ $("#openSettings").insertAdjacentHTML("afterend", '<button class="group-button" 
 document.body.insertAdjacentHTML("beforeend", '<div id="groupPopover" class="group-popover"></div>');
 $("#theme").parentElement.insertAdjacentHTML("beforeend",'<label class="setting-check"><input id="showGroupPopup" type="checkbox"> 실행 시 그룹 선택 팝업 표시</label>');
 document.body.insertAdjacentHTML("beforeend",'<div id="startupGroupModal" class="modal"><div class="dialog group-dialog"><header><h2>작업할 그룹 선택</h2></header><section><p>이 창에서 편집할 그룹을 선택하세요.</p><div id="startupGroups"></div></section></div></div><div id="imageEditModal" class="modal"><div class="dialog image-dialog"><header><h2>이미지 편집하기</h2><button id="closeImageEdit">×</button></header><section><div class="crop-stage"><img id="cropImage"></div><div class="zoom-row"><span>▧</span><input id="cropZoom" type="range" min="100" max="400" value="100"><span>▣</span></div><div class="crop-actions"><button id="cropReset">재설정</button><span></span><button id="cropCancel">취소</button><button id="cropApply">적용하기</button></div></section></div></div>');
+document.body.insertAdjacentHTML("beforeend",'<div id="searchModal" class="modal"><div class="dialog search-dialog"><header><h2>찾기 및 바꾸기</h2><button id="closeSearch">×</button></header><section><div class="search-form"><label>찾을 내용<input id="searchQuery" autocomplete="off"></label><label>바꿀 내용<input id="replaceText" autocomplete="off"></label><label>검색 범위<select id="searchScope"><option value="note">현재 메모장</option><option value="category">현재 카테고리</option><option value="channel">현재 채널</option><option value="group">현재 그룹</option><option value="all">전체</option></select></label><div class="search-actions"><button id="runSearch">찾기</button><button id="runReplace">범위 내 모두 바꾸기</button></div></div><div id="searchSummary"></div><div id="searchResults"></div></section></div></div>');
 function normalize() {
   if (!store.groups?.length) store.groups=[{id:id(),name:"기본 그룹"}];
   if (!store.groups.some(g=>g.id===store.lastGroupId)) store.lastGroupId=store.groups[0].id;
@@ -566,7 +568,14 @@ $("#export").onclick = async () => {
 };
 async function manualSave(){capture();dirty=true;clearTimeout(saveTimer);await save();$("#status").textContent=$("#status").textContent.replace("자동저장 완료","수동 저장 완료")}
 $("#manualSave").onclick=manualSave;
-document.addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="s"){e.preventDefault();manualSave()}});
+function searchArgs(){return [$("#searchQuery").value,$("#searchScope").value,store.lastGroupId,store.lastChannelId,store.lastCategoryId,store.lastNoteId]}
+function openSearch(){$("#searchModal").classList.add("show");setTimeout(()=>$("#searchQuery").focus(),0)}
+$("#openSearch").onclick=openSearch;$("#closeSearch").onclick=()=>$("#searchModal").classList.remove("show");$("#searchModal").onclick=e=>{if(e.target.id==="searchModal")e.currentTarget.classList.remove("show")};
+async function runSearch(){await save();const [q,scope,gid,cid,catid,nid]=searchArgs();if(!q.trim())return;const results=await api().SearchNotes(q,scope,gid,cid,catid,nid);const total=(results||[]).reduce((a,x)=>a+x.matches,0);$("#searchSummary").textContent=`${results?.length||0}개 메모에서 ${total}건 찾음`;$("#searchResults").innerHTML=(results||[]).map((r,i)=>`<button data-i="${i}"><b>${esc(r.noteName)}</b><small>${esc(r.groupName)} / ${esc(r.channelName)} / ${esc(r.categoryName)} · ${r.matches}건</small><span>${esc(r.snippet)}</span></button>`).join('');$("#searchResults").querySelectorAll('button').forEach(b=>b.onclick=()=>openSearchResult(results[+b.dataset.i]))}
+async function openSearchResult(r){if(r.groupId!==store.lastGroupId)await selectGroup(r.groupId);store.lastChannelId=r.channelId;store.lastCategoryId=r.categoryId;store.lastNoteId=r.noteId;$("#searchModal").classList.remove("show");render();mark()}
+$("#runSearch").onclick=runSearch;$("#searchQuery").onkeydown=e=>{if(e.key==="Enter")runSearch()};
+$("#runReplace").onclick=async()=>{const [q,scope,gid,cid,catid,nid]=searchArgs(),repl=$("#replaceText").value;if(!q.trim())return;if(!(await ask("범위 내 모두 바꾸기",`‘${q}’ 텍스트를 모두 바꿀까요?`)))return;await save();const result=await api().ReplaceNotes(q,repl,scope,gid,cid,catid,nid);const current=note();if(current){current.content="";current.contentLoaded=false}render();const skipped=(result.skippedGroups||[]).map(id=>store.groups.find(g=>g.id===id)?.name||id);$("#searchSummary").textContent=`${result.files}개 메모에서 ${result.replacements}건 변경${skipped.length?' · 작업 중이라 제외: '+skipped.join(', '):''}`;await runSearch()};
+document.addEventListener("keydown",e=>{if(!(e.ctrlKey||e.metaKey))return;const key=e.key.toLowerCase();if(key==="s"){e.preventDefault();manualSave()}else if(key==="f"){e.preventDefault();openSearch()}});
 $("#import").onclick = async () => {
   const imported = await api().ImportNote();
   if (!imported?.id) return;
