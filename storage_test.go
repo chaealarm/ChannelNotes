@@ -64,3 +64,49 @@ func TestFolderBackupRestore(t *testing.T) {
 		t.Fatal("restored note content is empty")
 	}
 }
+
+func TestFolderStoreRecoversWithoutSettings(t *testing.T) {
+	dir := t.TempDir()
+	s := defaultStore()
+	originalGroupID := s.Groups[0].ID
+	originalNoteID := s.Channels[0].Categories[0].Notes[0].ID
+	if err := writeFolderStore(dir, s, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dataRoot(dir), "settings.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := loadFolderStore(dir)
+	if err != nil {
+		t.Fatalf("group hierarchy should recover without settings: %v", err)
+	}
+	if len(loaded.Groups) != 1 || loaded.Groups[0].ID != originalGroupID {
+		t.Fatalf("existing group was not recovered: %+v", loaded.Groups)
+	}
+	if loaded.LastGroupID != originalGroupID || loaded.LastNoteID != originalNoteID {
+		t.Fatalf("last selection was not repaired: %+v", loaded)
+	}
+	if loaded.Theme != "dark" || !loaded.ShowGroupPopup || !loaded.PeriodicAutoSave {
+		t.Fatalf("safe settings defaults were not applied: %+v", loaded)
+	}
+}
+
+func TestFolderStoreRecoversWithCorruptSettings(t *testing.T) {
+	dir := t.TempDir()
+	s := defaultStore()
+	if err := writeFolderStore(dir, s, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataRoot(dir), "settings.json"), []byte("{broken"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := loadFolderStore(dir)
+	if err != nil {
+		t.Fatalf("group hierarchy should recover with corrupt settings: %v", err)
+	}
+	if len(loaded.Groups) != 1 || loaded.Groups[0].ID != s.Groups[0].ID {
+		t.Fatalf("existing group was replaced: %+v", loaded.Groups)
+	}
+}

@@ -11,13 +11,14 @@ import (
 )
 
 type settingsFile struct {
-	LastGroupID     string `json:"lastGroupId"`
-	LastChannelID   string `json:"lastChannelId"`
-	LastCategoryID  string `json:"lastCategoryId"`
-	LastNoteID      string `json:"lastNoteId"`
-	Theme           string `json:"theme"`
-	ShowGroupPopup  bool   `json:"showGroupPopup"`
-	SettingsVersion int    `json:"settingsVersion"`
+	LastGroupID      string `json:"lastGroupId"`
+	LastChannelID    string `json:"lastChannelId"`
+	LastCategoryID   string `json:"lastCategoryId"`
+	LastNoteID       string `json:"lastNoteId"`
+	Theme            string `json:"theme"`
+	ShowGroupPopup   bool   `json:"showGroupPopup"`
+	PeriodicAutoSave bool   `json:"periodicAutoSave"`
+	SettingsVersion  int    `json:"settingsVersion"`
 }
 
 func validID(id string) bool { return id != "" && !strings.ContainsAny(id, `\/:*?"<>|.`) }
@@ -55,10 +56,12 @@ func notePath(dir, gid, cid, catid, nid string) string {
 }
 
 func loadFolderStore(dir string) (Store, error) {
-	var s Store
-	if err := readJSON(filepath.Join(dataRoot(dir), "settings.json"), &s); err != nil {
-		return s, err
-	}
+	// settings.json is only a set of preferences and last-selection hints.  It
+	// must never decide whether the user's group data exists: an interrupted
+	// write or a transient read failure used to make startup create a second
+	// default store beside perfectly valid group folders.
+	s := Store{Theme: "dark", ShowGroupPopup: true, PeriodicAutoSave: true, SettingsVersion: 2}
+	_ = readJSON(filepath.Join(dataRoot(dir), "settings.json"), &s)
 	groupsDir := filepath.Join(dataRoot(dir), "groups")
 	ges, err := os.ReadDir(groupsDir)
 	if err != nil {
@@ -112,7 +115,72 @@ func loadFolderStore(dir string) (Store, error) {
 	if len(s.Groups) == 0 {
 		return s, errors.New("저장된 그룹이 없습니다")
 	}
+	repairLastSelection(&s)
 	return s, nil
+}
+
+func repairLastSelection(s *Store) {
+	groupExists := func(id string) bool {
+		for _, g := range s.Groups {
+			if g.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !groupExists(s.LastGroupID) {
+		s.LastGroupID = s.Groups[0].ID
+	}
+
+	channelIndex := -1
+	for i := range s.Channels {
+		if s.Channels[i].ID == s.LastChannelID && s.Channels[i].GroupID == s.LastGroupID {
+			channelIndex = i
+			break
+		}
+	}
+	if channelIndex < 0 {
+		for i := range s.Channels {
+			if s.Channels[i].GroupID == s.LastGroupID {
+				channelIndex = i
+				s.LastChannelID = s.Channels[i].ID
+				break
+			}
+		}
+	}
+	if channelIndex < 0 {
+		s.LastChannelID, s.LastCategoryID, s.LastNoteID = "", "", ""
+		return
+	}
+
+	c := &s.Channels[channelIndex]
+	categoryIndex := -1
+	for i := range c.Categories {
+		if c.Categories[i].ID == s.LastCategoryID {
+			categoryIndex = i
+			break
+		}
+	}
+	if categoryIndex < 0 && len(c.Categories) > 0 {
+		categoryIndex = 0
+		s.LastCategoryID = c.Categories[0].ID
+	}
+	if categoryIndex < 0 {
+		s.LastCategoryID, s.LastNoteID = "", ""
+		return
+	}
+
+	cat := &c.Categories[categoryIndex]
+	for _, n := range cat.Notes {
+		if n.ID == s.LastNoteID {
+			return
+		}
+	}
+	if len(cat.Notes) > 0 {
+		s.LastNoteID = cat.Notes[0].ID
+	} else {
+		s.LastNoteID = ""
+	}
 }
 
 func writeFolderStore(dir string, s Store, locked string) error {

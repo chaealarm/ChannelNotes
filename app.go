@@ -49,15 +49,16 @@ type Channel struct {
 	Categories []Category `json:"categories"`
 }
 type Store struct {
-	Groups          []Group   `json:"groups"`
-	Channels        []Channel `json:"channels"`
-	LastGroupID     string    `json:"lastGroupId"`
-	LastChannelID   string    `json:"lastChannelId"`
-	LastCategoryID  string    `json:"lastCategoryId"`
-	LastNoteID      string    `json:"lastNoteId"`
-	Theme           string    `json:"theme"`
-	ShowGroupPopup  bool      `json:"showGroupPopup"`
-	SettingsVersion int       `json:"settingsVersion"`
+	Groups           []Group   `json:"groups"`
+	Channels         []Channel `json:"channels"`
+	LastGroupID      string    `json:"lastGroupId"`
+	LastChannelID    string    `json:"lastChannelId"`
+	LastCategoryID   string    `json:"lastCategoryId"`
+	LastNoteID       string    `json:"lastNoteId"`
+	Theme            string    `json:"theme"`
+	ShowGroupPopup   bool      `json:"showGroupPopup"`
+	PeriodicAutoSave bool      `json:"periodicAutoSave"`
+	SettingsVersion  int       `json:"settingsVersion"`
 }
 type ImageData struct {
 	Name    string `json:"name"`
@@ -106,13 +107,17 @@ func (a *App) beforeClose(ctx context.Context) bool {
 func (a *App) FinishClose() { a.mu.Lock(); a.closeReady = true; a.mu.Unlock(); runtime.Quit(a.ctx) }
 func defaultStore() Store {
 	gid, cid, catid, nid := newID(), newID(), newID(), newID()
-	return Store{Groups: []Group{{ID: gid, Name: "기본 그룹"}}, Channels: []Channel{{ID: cid, Name: "내 채널", GroupID: gid, Categories: []Category{{ID: catid, Name: "메모장", Notes: []Note{{ID: nid, Title: "새 메모", Name: "새 메모", TitleLinked: true, Content: "<p>여기에 내용을 입력하세요.</p>", ContentLoaded: true}}}}}}, LastGroupID: gid, LastChannelID: cid, LastCategoryID: catid, LastNoteID: nid, Theme: "dark", ShowGroupPopup: true, SettingsVersion: 1}
+	return Store{Groups: []Group{{ID: gid, Name: "기본 그룹"}}, Channels: []Channel{{ID: cid, Name: "내 채널", GroupID: gid, Categories: []Category{{ID: catid, Name: "메모장", Notes: []Note{{ID: nid, Title: "새 메모", Name: "새 메모", TitleLinked: true, Content: "<p>여기에 내용을 입력하세요.</p>", ContentLoaded: true}}}}}}, LastGroupID: gid, LastChannelID: cid, LastCategoryID: catid, LastNoteID: nid, Theme: "dark", ShowGroupPopup: true, PeriodicAutoSave: true, SettingsVersion: 2}
 }
 
 func (a *App) normalize() {
 	if a.store.SettingsVersion < 1 {
 		a.store.ShowGroupPopup = true
 		a.store.SettingsVersion = 1
+	}
+	if a.store.SettingsVersion < 2 {
+		a.store.PeriodicAutoSave = true
+		a.store.SettingsVersion = 2
 	}
 	if a.store.Theme == "" {
 		a.store.Theme = "dark"
