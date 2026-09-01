@@ -162,6 +162,7 @@ select {
 .group-row button:disabled { cursor: not-allowed; }
 .setting-check { display:flex !important; align-items:center; gap:8px; margin-top:14px; color:var(--text) !important; }
 .setting-check input { accent-color:var(--accent); }
+.setting-help { margin:6px 0 0 24px; color:var(--muted); font-size:11px; line-height:1.5; }
 .group-dialog { width:min(460px,calc(100% - 32px)); }
 .group-dialog section>p { margin-top:0; color:var(--muted); }
 #startupGroups { display:grid; gap:7px; max-height:55vh; overflow-y:auto; }

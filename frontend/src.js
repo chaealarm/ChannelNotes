@@ -47,6 +47,7 @@ $(".settings-actions").insertAdjacentHTML("afterend",'<div class="group-data"><l
 $("#openSettings").insertAdjacentHTML("afterend", '<button class="group-button" id="groupButton" title="그룹 선택"></button>');
 document.body.insertAdjacentHTML("beforeend", '<div id="groupPopover" class="group-popover"></div>');
 $("#theme").parentElement.insertAdjacentHTML("beforeend",'<label class="setting-check"><input id="showGroupPopup" type="checkbox"> 실행 시 그룹 선택 팝업 표시</label>');
+$("#showGroupPopup").parentElement.insertAdjacentHTML("afterend",'<label class="setting-check"><input id="periodicAutoSave" type="checkbox"> 주기적 자동저장</label><p class="setting-help">끄더라도 화면 전환, 삭제, 수동 저장 및 프로그램 종료 시에는 저장됩니다.</p>');
 document.body.insertAdjacentHTML("beforeend",'<div id="startupGroupModal" class="modal"><div class="dialog group-dialog"><header><h2>작업할 그룹 선택</h2></header><section><p>이 창에서 편집할 그룹을 선택하세요.</p><div id="startupGroups"></div></section></div></div><div id="imageEditModal" class="modal"><div class="dialog image-dialog"><header><h2>이미지 편집하기</h2><button id="closeImageEdit">×</button></header><section><div class="crop-stage"><img id="cropImage"></div><div class="zoom-row"><span>▧</span><input id="cropZoom" type="range" min="100" max="400" value="100"><span>▣</span></div><div class="crop-actions"><button id="cropReset">재설정</button><span></span><button id="cropCancel">취소</button><button id="cropApply">적용하기</button></div></section></div></div>');
 document.body.insertAdjacentHTML("beforeend",'<div id="searchModal" class="modal"><div class="dialog search-dialog"><header><h2>찾기 및 바꾸기</h2><button id="closeSearch">×</button></header><section><div class="search-form"><label>찾을 내용<input id="searchQuery" autocomplete="off"></label><label>바꿀 내용<input id="replaceText" autocomplete="off"></label><label>검색 범위<select id="searchScope"><option value="note">현재 메모장</option><option value="category">현재 카테고리</option><option value="channel">현재 채널</option><option value="group">현재 그룹</option><option value="all">전체</option></select></label><div class="search-actions"><button id="runSearch">찾기</button><button id="runReplace">범위 내 모두 바꾸기</button></div></div><div id="searchSummary"></div><div id="searchResults"></div></section></div></div>');
 function normalize() {
@@ -76,6 +77,7 @@ function applyTheme() {
   document.documentElement.dataset.theme = store.theme;
   $("#theme").value = store.theme;
   $("#showGroupPopup").checked=store.showGroupPopup!==false;
+  $("#periodicAutoSave").checked=store.periodicAutoSave!==false;
 }
 function render() {
   normalize();
@@ -116,7 +118,7 @@ function render() {
   });
   document.querySelectorAll(".category").forEach((el)=>{
     const gid=el.dataset.categoryId;
-    el.querySelector(".category-name").onclick=()=>{store.lastCategoryId=gid;el.classList.toggle("folded");mark()};
+    el.querySelector(".category-name").onclick=async()=>{await save();store.lastCategoryId=gid;el.classList.toggle("folded");mark()};
     el.querySelector(".category-name").oncontextmenu=(e)=>categoryMenu(e,gid);
     el.querySelector(".category-add").onclick=()=>addNote(gid);
   });
@@ -154,7 +156,7 @@ async function ensureNoteLoaded(nid) {
 function mark() {
   dirty = true;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(save, 1200);
+  if(store.periodicAutoSave!==false) saveTimer = setTimeout(save, 1200);
 }
 async function save() {
   if (!api() || !dirty) return;
@@ -167,7 +169,7 @@ async function save() {
     $("#status").textContent = "저장 실패: " + e;
   }
 }
-setInterval(() => dirty && save(), 5000);
+setInterval(() => dirty && store.periodicAutoSave!==false && save(), 5000);
 addEventListener("beforeunload", save);
 function ask(title, message, value) {
   $("#askTitle").textContent = title;
@@ -535,7 +537,8 @@ $("#theme").onchange = (e) => {
   applyTheme();
   mark();
 };
-$("#showGroupPopup").onchange=(e)=>{store.showGroupPopup=e.target.checked;store.settingsVersion=1;mark()};
+$("#showGroupPopup").onchange=async(e)=>{store.showGroupPopup=e.target.checked;store.settingsVersion=2;dirty=true;clearTimeout(saveTimer);await save()};
+$("#periodicAutoSave").onchange=async(e)=>{store.periodicAutoSave=e.target.checked;store.settingsVersion=2;dirty=true;clearTimeout(saveTimer);await save()};
 async function showStartupGroups(){
   const locked=new Set(await api().LockedGroups()),box=$("#startupGroups");
   box.innerHTML=store.groups.map(g=>`<button data-id="${g.id}" ${locked.has(g.id)?'disabled':''}><b>${esc(g.name)}</b><small>${locked.has(g.id)?'다른 창에서 작업 중':'선택하여 편집 시작'}</small></button>`).join('')+'<button id="startupAddGroup" class="startup-add"><b>＋ 새 그룹 생성</b><small>새 작업 공간을 만들어 시작합니다</small></button>';
