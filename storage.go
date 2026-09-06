@@ -12,14 +12,18 @@ import (
 )
 
 type settingsFile struct {
-	LastGroupID      string `json:"lastGroupId"`
-	LastChannelID    string `json:"lastChannelId"`
-	LastCategoryID   string `json:"lastCategoryId"`
-	LastNoteID       string `json:"lastNoteId"`
-	Theme            string `json:"theme"`
-	ShowGroupPopup   bool   `json:"showGroupPopup"`
-	PeriodicAutoSave bool   `json:"periodicAutoSave"`
-	SettingsVersion  int    `json:"settingsVersion"`
+	LastGroupID      string   `json:"lastGroupId"`
+	LastChannelID    string   `json:"lastChannelId"`
+	LastCategoryID   string   `json:"lastCategoryId"`
+	LastNoteID       string   `json:"lastNoteId"`
+	Theme            string   `json:"theme"`
+	ShowGroupPopup   bool     `json:"showGroupPopup"`
+	PeriodicAutoSave bool     `json:"periodicAutoSave"`
+	HideChannels     bool     `json:"hideChannels"`
+	HideNotes        bool     `json:"hideNotes"`
+	OpenNoteIDs      []string `json:"openNoteIds"`
+	ImageInsertWidth int      `json:"imageInsertWidth"`
+	SettingsVersion  int      `json:"settingsVersion"`
 }
 
 func validID(id string) bool { return id != "" && !strings.ContainsAny(id, `\/:*?"<>|.`) }
@@ -61,7 +65,7 @@ func loadFolderStore(dir string) (Store, error) {
 	// must never decide whether the user's group data exists: an interrupted
 	// write or a transient read failure used to make startup create a second
 	// default store beside perfectly valid group folders.
-	s := Store{Theme: "dark", ShowGroupPopup: true, PeriodicAutoSave: true, SettingsVersion: 2}
+	s := Store{Theme: "dark", ShowGroupPopup: true, PeriodicAutoSave: true, ImageInsertWidth: 100, SettingsVersion: 2}
 	_ = readJSON(filepath.Join(dataRoot(dir), "settings.json"), &s)
 	groupsDir := filepath.Join(dataRoot(dir), "groups")
 	ges, err := os.ReadDir(groupsDir)

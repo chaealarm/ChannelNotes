@@ -9,6 +9,7 @@ import (
 func TestFolderStoreRoundTripAndLazyContent(t *testing.T) {
 	dir := t.TempDir()
 	s := defaultStore()
+	s.ImageInsertWidth = 37
 	n := &s.Channels[0].Categories[0].Notes[0]
 	n.ContentLoaded = true
 	n.Content = "<h1>folder storage</h1>"
@@ -20,6 +21,9 @@ func TestFolderStoreRoundTripAndLazyContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := loaded.Channels[0].Categories[0].Notes[0]
+	if loaded.ImageInsertWidth != 37 {
+		t.Fatalf("image insert width was not persisted: %d", loaded.ImageInsertWidth)
+	}
 	if got.Content != "" || got.ContentLoaded {
 		t.Fatal("metadata load eagerly loaded note content")
 	}
@@ -62,6 +66,91 @@ func TestFolderBackupRestore(t *testing.T) {
 	}
 	if content == "" {
 		t.Fatal("restored note content is empty")
+	}
+}
+
+func TestPersistRestoredGroupWritesAllNoteBodies(t *testing.T) {
+	dir := t.TempDir()
+	original := defaultStore()
+	if err := writeFolderStore(dir, original, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	restoredGroup := Group{ID: "restored-group", Name: "복원 그룹"}
+	restoredChannel := Channel{ID: "restored-channel", Name: "복원 채널", GroupID: restoredGroup.ID, Categories: []Category{
+		{ID: "restored-category-a", Name: "카테고리 A", Notes: []Note{
+			{ID: "restored-note-a", Title: "메모 A", Name: "메모 A", Content: "<p>첫 번째 본문</p>", ContentLoaded: true},
+			{ID: "restored-note-b", Title: "메모 B", Name: "메모 B", Content: "<p>두 번째 본문</p>", ContentLoaded: true},
+		}},
+		{ID: "restored-category-b", Name: "빈 카테고리", Notes: []Note{}},
+	}}
+	a := NewApp()
+	a.dir = dir
+	if err := a.persistRestoredGroup(GroupBundle{Group: restoredGroup, Channels: []Channel{restoredChannel}}); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := loadFolderStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Groups) != 2 || len(loaded.Channels) != 2 {
+		t.Fatalf("restored hierarchy missing: groups=%d channels=%d", len(loaded.Groups), len(loaded.Channels))
+	}
+	var got *Channel
+	for i := range loaded.Channels {
+		if loaded.Channels[i].ID == restoredChannel.ID {
+			got = &loaded.Channels[i]
+		}
+	}
+	if got == nil || len(got.Categories) != 2 || len(got.Categories[0].Notes) != 2 {
+		t.Fatalf("restored categories or notes missing: %+v", got)
+	}
+	for i, want := range []string{"<p>첫 번째 본문</p>", "<p>두 번째 본문</p>"} {
+		content, loadErr := loadNoteFolder(dir, loaded, got.Categories[0].Notes[i].ID)
+		if loadErr != nil || content != want {
+			t.Fatalf("note %d body mismatch: content=%q err=%v", i, content, loadErr)
+		}
+	}
+}
+
+func TestPrepareRestoredGroupAssignsUniqueIDs(t *testing.T) {
+	bundle := GroupBundle{Group: Group{ID: "old-group", Name: "백업"}}
+	channel := Channel{ID: "old-channel", GroupID: "old-group", Name: "채널"}
+	for categoryIndex := 0; categoryIndex < 30; categoryIndex++ {
+		category := Category{ID: "same-old-category", Name: "카테고리"}
+		for noteIndex := 0; noteIndex < 30; noteIndex++ {
+			category.Notes = append(category.Notes, Note{ID: "same-old-note", Name: "메모", Content: "<p>보존할 본문</p>"})
+		}
+		channel.Categories = append(channel.Categories, category)
+	}
+	bundle.Channels = []Channel{channel}
+
+	restored := prepareRestoredGroup(bundle)
+	seen := map[string]bool{restored.Group.ID: true}
+	for _, c := range restored.Channels {
+		if c.GroupID != restored.Group.ID || seen[c.ID] {
+			t.Fatalf("invalid or duplicate channel id: %q", c.ID)
+		}
+		seen[c.ID] = true
+		for _, category := range c.Categories {
+			if seen[category.ID] {
+				t.Fatalf("duplicate category id: %q", category.ID)
+			}
+			seen[category.ID] = true
+			for _, note := range category.Notes {
+				if seen[note.ID] {
+					t.Fatalf("duplicate note id: %q", note.ID)
+				}
+				seen[note.ID] = true
+				if note.Content != "<p>보존할 본문</p>" || !note.ContentLoaded {
+					t.Fatalf("note body was not preserved: %+v", note)
+				}
+			}
+		}
+	}
+	if len(seen) != 1+1+30+900 {
+		t.Fatalf("unexpected unique id count: %d", len(seen))
 	}
 }
 
