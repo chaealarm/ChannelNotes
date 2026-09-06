@@ -16,6 +16,7 @@ let store = { groups: [], channels: [], lastGroupId: "", lastChannelId: "", last
   selectedNotes = new Set(),
   askResolve = null;
 let closeHandlerRegistered=false;
+let dragItem=null, suppressClickUntil=0;
 const channel = () =>
     store.channels.find((c) => c.id === store.lastChannelId) ||
     store.channels[0],
@@ -46,6 +47,7 @@ $("#addNote").title = "카테고리 추가";
 $(".settings-actions").insertAdjacentHTML("afterend",'<div class="group-data"><label>그룹 백업·복원</label><select id="groupDataSelect"></select><div><button id="backupGroup">선택 그룹 백업</button><button id="restoreGroup">그룹 복원</button></div></div>');
 $("#openSettings").insertAdjacentHTML("afterend", '<button class="group-button" id="groupButton" title="그룹 선택"></button>');
 document.body.insertAdjacentHTML("beforeend", '<div id="groupPopover" class="group-popover"></div>');
+document.body.insertAdjacentHTML("beforeend", '<div id="dragDestinations" class="drag-destinations"></div>');
 $("#theme").parentElement.insertAdjacentHTML("beforeend",'<label class="setting-check"><input id="showGroupPopup" type="checkbox"> 실행 시 그룹 선택 팝업 표시</label>');
 $("#showGroupPopup").parentElement.insertAdjacentHTML("afterend",'<label class="setting-check"><input id="periodicAutoSave" type="checkbox"> 주기적 자동저장</label><p class="setting-help">끄더라도 화면 전환, 삭제, 수동 저장 및 프로그램 종료 시에는 저장됩니다.</p>');
 document.body.insertAdjacentHTML("beforeend",'<div id="startupGroupModal" class="modal"><div class="dialog group-dialog"><header><h2>작업할 그룹 선택</h2></header><section><p>이 창에서 편집할 그룹을 선택하세요.</p><div id="startupGroups"></div></section></div></div><div id="imageEditModal" class="modal"><div class="dialog image-dialog"><header><h2>이미지 편집하기</h2><button id="closeImageEdit">×</button></header><section><div class="crop-stage"><img id="cropImage"></div><div class="zoom-row"><span>▧</span><input id="cropZoom" type="range" min="100" max="400" value="100"><span>▣</span></div><div class="crop-actions"><button id="cropReset">재설정</button><span></span><button id="cropCancel">취소</button><button id="cropApply">적용하기</button></div></section></div></div>');
@@ -90,7 +92,7 @@ function render() {
   $("#channels").innerHTML = visibleChannels()
     .map(
       (x) =>
-        `<button class="channel ${x.id === c.id ? "active" : ""}" data-id="${x.id}" title="${esc(x.name)}">${x.image ? `<img src="${x.image}">` : esc(x.name.slice(0, 2))}</button>`,
+        `<button class="channel ${x.id === c.id ? "active" : ""}" draggable="true" data-id="${x.id}" title="${esc(x.name)}">${x.image ? `<img src="${x.image}">` : esc(x.name.slice(0, 2))}</button>`,
     )
     .join("");
   $("#channelName").textContent = c.name;
@@ -98,7 +100,7 @@ function render() {
   $("#toggleNotes").textContent = `${notesCollapsed ? "›" : "⌄"} 카테고리`;
   $("#bulkBar").classList.toggle("show", selectMode);
   $("#selectedCount").textContent = `${selectedNotes.size}개 선택`;
-  $("#notes").innerHTML = c.categories.map(g=>`<section class="category ${g.id===store.lastCategoryId?'current':''}" data-category-id="${g.id}"><div class="category-head"><button class="category-name">⌄ ${esc(g.name)}</button><button class="category-add" title="이 카테고리에 메모 추가">＋</button></div><div class="category-notes">${g.notes.map(x=>selectMode?`<label class="note selectable" data-id="${x.id}"><input type="checkbox" ${selectedNotes.has(x.id)?"checked":""}><span>#</span><b>${esc(x.name||x.title)}</b></label>`:`<button class="note ${x.id===n.id?"active":""}" data-id="${x.id}"><span>#</span><b>${esc(x.name||x.title)}</b></button>`).join("")}</div></section>`).join("");
+  $("#notes").innerHTML = c.categories.map(g=>`<section class="category ${g.id===store.lastCategoryId?'current':''}" draggable="true" data-category-id="${g.id}"><div class="category-head"><button class="category-name">⌄ ${esc(g.name)}</button><button class="category-add" title="이 카테고리에 메모 추가">＋</button></div><div class="category-notes">${g.notes.map(x=>selectMode?`<label class="note selectable" draggable="false" data-id="${x.id}"><input type="checkbox" ${selectedNotes.has(x.id)?"checked":""}><span>#</span><b>${esc(x.name||x.title)}</b></label>`:`<button class="note ${x.id===n.id?"active":""}" draggable="true" data-id="${x.id}"><span>#</span><b>${esc(x.name||x.title)}</b></button>`).join("")}</div></section>`).join("");
   $("#title").value = n.title || "";
   if(n.contentLoaded)n.content=withoutLegacyTitle(n.content,n.title);
   $("#editor").innerHTML = n.content || "";
@@ -106,13 +108,13 @@ function render() {
   selectedImage = null;
   imageTools();
   document.querySelectorAll(".channel").forEach((b) => {
-    b.onclick = () => switchChannel(b.dataset.id);
+    b.onclick = () => Date.now() < suppressClickUntil || switchChannel(b.dataset.id);
     b.oncontextmenu = (e) => channelMenu(e, b.dataset.id);
   });
   document.querySelectorAll(".note").forEach((b) => {
     if (selectMode) b.onclick = () => toggleSelected(b.dataset.id);
     else {
-      b.onclick = () => switchNote(b.dataset.id);
+      b.onclick = () => Date.now() < suppressClickUntil || switchNote(b.dataset.id);
       b.oncontextmenu = (e) => noteMenu(e, b.dataset.id);
     }
   });
@@ -122,6 +124,186 @@ function render() {
     el.querySelector(".category-name").oncontextmenu=(e)=>categoryMenu(e,gid);
     el.querySelector(".category-add").onclick=()=>addNote(gid);
   });
+  initListDragging();
+}
+
+function moveBeforeOrAfter(items, sourceId, targetId, after) {
+  const from=items.findIndex(x=>x.id===sourceId), target=items.findIndex(x=>x.id===targetId);
+  if(from<0||target<0||from===target)return items;
+  const next=items.slice(), [moved]=next.splice(from,1);
+  const at=next.findIndex(x=>x.id===targetId)+(after?1:0);
+  next.splice(at,0,moved);
+  return next;
+}
+function finishListDrop() {
+  document.querySelectorAll('.dragging,.drop-before,.drop-after').forEach(el=>el.classList.remove('dragging','drop-before','drop-after'));
+  $("#dragDestinations").classList.remove("show");
+  $("#dragDestinations").dataset.mode="";
+  dragItem=null;
+  suppressClickUntil=Date.now()+250;
+}
+function wireSortable(elements,type,idOf,onMove) {
+  elements.forEach(el=>{
+    el.addEventListener('dragstart',e=>{
+      if(selectMode||e.target.closest('.category-add')){e.preventDefault();return}
+      e.stopPropagation();
+      dragItem={type,id:idOf(el),sourceChannelId:store.lastChannelId};
+      if(type==='note')dragItem.sourceCategoryId=el.closest('.category').dataset.categoryId;
+      capture();
+      el.classList.add('dragging');
+      e.dataTransfer.effectAllowed='move';
+      e.dataTransfer.setData('text/plain',dragItem.id);
+    });
+    el.addEventListener('dragover',e=>{
+      if(!dragItem||dragItem.type!==type||dragItem.id===idOf(el))return;
+      e.preventDefault();e.stopPropagation();
+      const rect=el.getBoundingClientRect(),after=e.clientY>rect.top+rect.height/2;
+      el.classList.toggle('drop-before',!after);el.classList.toggle('drop-after',after);
+      e.dataTransfer.dropEffect='move';
+    });
+    el.addEventListener('dragleave',()=>el.classList.remove('drop-before','drop-after'));
+    el.addEventListener('drop',e=>{
+      if(!dragItem||dragItem.type!==type)return;
+      e.preventDefault();e.stopPropagation();
+      const rect=el.getBoundingClientRect(),after=e.clientY>rect.top+rect.height/2;
+      onMove(dragItem.id,idOf(el),after);
+      finishListDrop();render();mark();save();
+    });
+    el.addEventListener('dragend',e=>{e.stopPropagation();finishListDrop()});
+  });
+}
+function initListDragging(){
+  wireSortable(document.querySelectorAll('#channels .channel'),'channel',el=>el.dataset.id,(source,target,after)=>{
+    const slots=[];store.channels.forEach((c,i)=>{if(c.groupId===store.lastGroupId)slots.push(i)});
+    const ordered=moveBeforeOrAfter(slots.map(i=>store.channels[i]),source,target,after);
+    slots.forEach((slot,i)=>store.channels[slot]=ordered[i]);
+  });
+  wireSortable(document.querySelectorAll('#notes > .category'),'category',el=>el.dataset.categoryId,(source,target,after)=>{
+    moveCategory(source,store.lastChannelId,target,after);
+  });
+  document.querySelectorAll('.category').forEach(catEl=>{
+    const cat=channel().categories.find(x=>x.id===catEl.dataset.categoryId);
+    wireSortable(catEl.querySelectorAll('.category-notes > .note'),'note',el=>el.dataset.id,(source,target,after)=>{
+      moveNote(source,cat.id,target,after);
+    });
+    const list=catEl.querySelector('.category-notes');
+    list.addEventListener('dragover',e=>{
+      if(dragItem?.type!=='note'||e.target.closest('.note'))return;
+      e.preventDefault();e.stopPropagation();list.classList.add('drop-inside');
+    });
+    list.addEventListener('dragleave',e=>{if(!list.contains(e.relatedTarget))list.classList.remove('drop-inside')});
+    list.addEventListener('drop',e=>{
+      if(dragItem?.type!=='note'||e.target.closest('.note'))return;
+      e.preventDefault();e.stopPropagation();moveNote(dragItem.id,cat.id);finishListDrop();render();mark();save();
+    });
+  });
+  document.querySelectorAll('#channels .channel').forEach(el=>{
+    el.addEventListener('dragover',e=>{
+      if(!dragItem||!['note','category'].includes(dragItem.type)||el.dataset.id===dragItem.sourceChannelId)return;
+      e.preventDefault();e.stopPropagation();e.dataTransfer.dropEffect='move';showDragDestinations(el,el.dataset.id);
+    });
+    el.addEventListener('drop',e=>{
+      if(dragItem?.type!=='category'||el.dataset.id===dragItem.sourceChannelId)return;
+      e.preventDefault();e.stopPropagation();moveCategory(dragItem.id,el.dataset.id);completeCrossMove(el.dataset.id,dragItem.id,'category');
+    });
+  });
+  $("#groupButton").ondragover=e=>{
+    if(dragItem?.type!=='channel')return;
+    e.preventDefault();e.stopPropagation();e.dataTransfer.dropEffect='move';showChannelGroupDestinations();
+  };
+}
+
+function channelById(cid){return store.channels.find(c=>c.id===cid)}
+function findNoteLocation(nid){
+  for(const c of store.channels)for(const cat of c.categories||[]){const index=(cat.notes||[]).findIndex(n=>n.id===nid);if(index>=0)return{channel:c,category:cat,index}}
+  return null;
+}
+function findCategoryLocation(gid){
+  for(const c of store.channels){const index=(c.categories||[]).findIndex(g=>g.id===gid);if(index>=0)return{channel:c,index}}
+  return null;
+}
+function ensureCategory(c){
+  if(!c.categories.length)c.categories.push({id:id(),name:'메모장',notes:[]});
+}
+function moveNote(nid,targetCategoryId,targetNoteId='',after=true){
+  const source=findNoteLocation(nid),targetChannel=store.channels.find(c=>c.categories?.some(g=>g.id===targetCategoryId));
+  const target=targetChannel?.categories.find(g=>g.id===targetCategoryId);
+  if(!source||!target)return false;
+  const [moved]=source.category.notes.splice(source.index,1);
+  let at=target.notes.findIndex(n=>n.id===targetNoteId);
+  if(at<0)at=target.notes.length;else if(after)at++;
+  target.notes.splice(Math.max(0,at),0,moved);
+  return true;
+}
+function moveCategory(gid,targetChannelId,targetCategoryId='',after=true){
+  const source=findCategoryLocation(gid),target=channelById(targetChannelId);
+  if(!source||!target)return false;
+  const [moved]=source.channel.categories.splice(source.index,1);
+  let at=target.categories.findIndex(g=>g.id===targetCategoryId);
+  if(at<0)at=target.categories.length;else if(after)at++;
+  target.categories.splice(Math.max(0,at),0,moved);
+  ensureCategory(source.channel);
+  return true;
+}
+function showDragDestinations(channelEl,cid){
+  const panel=$("#dragDestinations"),c=channelById(cid),rect=channelEl.getBoundingClientRect();
+  panel.dataset.mode='channel-contents';
+  panel.style.left=(rect.right+10)+'px';panel.style.top=Math.min(rect.top,innerHeight-260)+'px';
+  if(dragItem.type==='category'){
+    panel.innerHTML=`<strong>${esc(c.name)}</strong><div class="drag-target" data-channel-id="${cid}">이 채널의 맨 아래로 이동</div>`;
+  }else{
+    panel.innerHTML=`<strong>${esc(c.name)}</strong>${c.categories.map(g=>`<div class="drag-target" data-channel-id="${cid}" data-category-id="${g.id}">${esc(g.name)}</div>`).join('')}`;
+  }
+  panel.classList.add('show');
+  panel.querySelectorAll('.drag-target').forEach(target=>{
+    target.ondragover=e=>{e.preventDefault();e.stopPropagation();target.classList.add('over');e.dataTransfer.dropEffect='move'};
+    target.ondragleave=()=>target.classList.remove('over');
+    target.ondrop=e=>{
+      e.preventDefault();e.stopPropagation();
+      if(dragItem.type==='note')moveNote(dragItem.id,target.dataset.categoryId);
+      else moveCategory(dragItem.id,cid);
+      completeCrossMove(cid,dragItem.id,dragItem.type,target.dataset.categoryId);
+    };
+  });
+}
+async function showChannelGroupDestinations(){
+  const panel=$("#dragDestinations"),movingId=dragItem?.id;
+  if(!movingId||panel.dataset.mode===`groups:${movingId}`)return;
+  panel.dataset.mode=`groups:${movingId}`;
+  const rect=$("#groupButton").getBoundingClientRect();
+  panel.style.left=(rect.right+10)+'px';panel.style.top=Math.max(8,rect.top)+'px';
+  panel.innerHTML='<strong>이동할 그룹 확인 중…</strong>';panel.classList.add('show');
+  const locked=new Set(await api().LockedGroups());
+  if(dragItem?.type!=='channel'||dragItem.id!==movingId)return;
+  const choices=store.groups.filter(g=>g.id!==store.lastGroupId);
+  panel.innerHTML=`<strong>채널을 이동할 그룹</strong>${choices.length?choices.map(g=>`<div class="drag-target ${locked.has(g.id)?'locked':''}" data-group-id="${g.id}"><span>${esc(g.name)}</span>${locked.has(g.id)?'<small>다른 창에서 사용 중</small>':''}</div>`).join(''):'<div class="drag-empty">이동할 다른 그룹이 없습니다.</div>'}`;
+  panel.querySelectorAll('.drag-target:not(.locked)').forEach(target=>{
+    target.ondragover=e=>{e.preventDefault();e.stopPropagation();target.classList.add('over');e.dataTransfer.dropEffect='move'};
+    target.ondragleave=()=>target.classList.remove('over');
+    target.ondrop=e=>{e.preventDefault();e.stopPropagation();moveChannelAcrossGroups(movingId,target.dataset.groupId)};
+  });
+}
+async function moveChannelAcrossGroups(cid,gid){
+  finishListDrop();
+  await save();
+  try{
+    store=await api().MoveChannelToGroup(cid,gid,store);
+    dirty=false;normalize();render();
+    const target=store.groups.find(g=>g.id===gid);
+    $("#status").textContent=`‘${target?.name||'대상 그룹'}’으로 채널 이동 완료`;
+  }catch(e){
+    render();
+    await ask('채널 이동 실패',String(e));
+  }
+}
+function completeCrossMove(cid,movedId,type,categoryId=''){
+  store.lastChannelId=cid;
+  if(type==='note'){
+    store.lastCategoryId=categoryId;store.lastNoteId=movedId;
+  }else{
+    store.lastCategoryId=movedId;store.lastNoteId=channelById(cid).categories.find(g=>g.id===movedId)?.notes[0]?.id||allNotes()[0]?.id||'';
+  }
+  finishListDrop();render();mark();save();
 }
 async function switchChannel(cid) {
   await save();
