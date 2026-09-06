@@ -20,15 +20,21 @@ export function LoadNoteContent(arg1:string):Promise<string>;
 
 export function LockedGroups():Promise<Array<string>>;
 
+export function MoveChannelToGroup(arg1:string,arg2:string,arg3:main.Store):Promise<main.Store>;
+
 export function ReleaseGroup():Promise<void>;
 
 export function ReloadStore():Promise<main.Store>;
+
+export function ReplaceNotes(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string):Promise<main.ReplaceResult>;
 
 export function RestoreAll():Promise<main.Store>;
 
 export function RestoreGroup():Promise<main.GroupBundle>;
 
 export function SaveStore(arg1:main.Store):Promise<string>;
+
+export function SearchNotes(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<Array<main.SearchResult>>;
 
 export function SelectImages():Promise<Array<main.ImageData>>;
 

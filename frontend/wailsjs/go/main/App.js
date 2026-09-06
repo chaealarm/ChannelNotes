@@ -38,12 +38,20 @@ export function LockedGroups() {
   return window['go']['main']['App']['LockedGroups']();
 }
 
+export function MoveChannelToGroup(arg1, arg2, arg3) {
+  return window['go']['main']['App']['MoveChannelToGroup'](arg1, arg2, arg3);
+}
+
 export function ReleaseGroup() {
   return window['go']['main']['App']['ReleaseGroup']();
 }
 
 export function ReloadStore() {
   return window['go']['main']['App']['ReloadStore']();
+}
+
+export function ReplaceNotes(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['ReplaceNotes'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
 export function RestoreAll() {
@@ -56,6 +64,10 @@ export function RestoreGroup() {
 
 export function SaveStore(arg1) {
   return window['go']['main']['App']['SaveStore'](arg1);
+}
+
+export function SearchNotes(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['SearchNotes'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function SelectImages() {

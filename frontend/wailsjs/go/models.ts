@@ -8,6 +8,7 @@ export namespace main {
 	    content: string;
 	    contentLoaded?: boolean;
 	    updatedAt: string;
+	    order: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Note(source);
@@ -22,11 +23,13 @@ export namespace main {
 	        this.content = source["content"];
 	        this.contentLoaded = source["contentLoaded"];
 	        this.updatedAt = source["updatedAt"];
+	        this.order = source["order"];
 	    }
 	}
 	export class Category {
 	    id: string;
 	    name: string;
+	    order: number;
 	    notes: Note[];
 	
 	    static createFrom(source: any = {}) {
@@ -37,6 +40,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.name = source["name"];
+	        this.order = source["order"];
 	        this.notes = this.convertValues(source["notes"], Note);
 	    }
 	
@@ -63,6 +67,7 @@ export namespace main {
 	    name: string;
 	    image: string;
 	    groupId: string;
+	    order: number;
 	    notes?: Note[];
 	    categories: Category[];
 	
@@ -76,6 +81,7 @@ export namespace main {
 	        this.name = source["name"];
 	        this.image = source["image"];
 	        this.groupId = source["groupId"];
+	        this.order = source["order"];
 	        this.notes = this.convertValues(source["notes"], Note);
 	        this.categories = this.convertValues(source["categories"], Category);
 	    }
@@ -159,6 +165,52 @@ export namespace main {
 	    }
 	}
 	
+	export class ReplaceResult {
+	    replacements: number;
+	    files: number;
+	    skippedGroups: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ReplaceResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.replacements = source["replacements"];
+	        this.files = source["files"];
+	        this.skippedGroups = source["skippedGroups"];
+	    }
+	}
+	export class SearchResult {
+	    groupId: string;
+	    groupName: string;
+	    channelId: string;
+	    channelName: string;
+	    categoryId: string;
+	    categoryName: string;
+	    noteId: string;
+	    noteName: string;
+	    snippet: string;
+	    matches: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.groupId = source["groupId"];
+	        this.groupName = source["groupName"];
+	        this.channelId = source["channelId"];
+	        this.channelName = source["channelName"];
+	        this.categoryId = source["categoryId"];
+	        this.categoryName = source["categoryName"];
+	        this.noteId = source["noteId"];
+	        this.noteName = source["noteName"];
+	        this.snippet = source["snippet"];
+	        this.matches = source["matches"];
+	    }
+	}
 	export class Store {
 	    groups: Group[];
 	    channels: Channel[];
@@ -168,6 +220,9 @@ export namespace main {
 	    lastNoteId: string;
 	    theme: string;
 	    showGroupPopup: boolean;
+	    periodicAutoSave: boolean;
+	    hideChannels: boolean;
+	    hideNotes: boolean;
 	    settingsVersion: number;
 	
 	    static createFrom(source: any = {}) {
@@ -184,6 +239,9 @@ export namespace main {
 	        this.lastNoteId = source["lastNoteId"];
 	        this.theme = source["theme"];
 	        this.showGroupPopup = source["showGroupPopup"];
+	        this.periodicAutoSave = source["periodicAutoSave"];
+	        this.hideChannels = source["hideChannels"];
+	        this.hideNotes = source["hideNotes"];
 	        this.settingsVersion = source["settingsVersion"];
 	    }
 	

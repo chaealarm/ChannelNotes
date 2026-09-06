@@ -77,6 +77,11 @@ select {
   height: 100vh;
   min-height: 0;
 }
+.shell.channels-hidden { grid-template-columns: 0 250px minmax(0, 1fr); }
+.shell.notes-hidden { grid-template-columns: 72px 0 minmax(0, 1fr); }
+.shell.channels-hidden.notes-hidden { grid-template-columns: 0 0 minmax(0, 1fr); }
+.shell.channels-hidden .rail,
+.shell.notes-hidden .sidebar { visibility: hidden; overflow: hidden; }
 .rail {
   background: var(--rail);
   padding: 12px 8px;
@@ -372,10 +377,44 @@ select {
 main {
   background: var(--main);
   display: grid;
-  grid-template-rows: 50px auto minmax(0, 1fr) 30px;
+  grid-template-rows: 50px 38px auto minmax(0, 1fr) 30px;
   min-width: 0;
   min-height: 0;
 }
+.tabs {
+  display: flex;
+  align-items: end;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 5px 8px 0;
+  background: var(--side);
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: thin;
+}
+.memo-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 1 190px;
+  min-width: 90px;
+  max-width: 220px;
+  height: 32px;
+  padding: 0 8px 0 11px;
+  color: var(--muted);
+  background: var(--main);
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  user-select: none;
+}
+.memo-tab span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.memo-tab button { border: 0; background: none; color: var(--muted); padding: 2px 4px; }
+.memo-tab.active { color: var(--text); background: var(--paper); box-shadow: inset 0 2px var(--accent); }
+.memo-tab.detached { opacity: .6; cursor: default; }
+.memo-tab.detached i { color: #18b8c9; font-style: normal; }
+.memo-tab.dragging { opacity: .35; }
+.memo-tab.drop-tab { box-shadow: inset 3px 0 #18b8c9; }
 .top {
   gap: 12px;
 }
@@ -395,6 +434,10 @@ main {
   color: var(--text);
   border-radius: 4px;
   padding: 7px 10px;
+}
+.top button.pane-hidden {
+  color: #18b8c9;
+  box-shadow: inset 0 0 0 1px #18b8c9;
 }
 .toolbar {
   display: flex;
@@ -468,6 +511,16 @@ main {
   min-height: 0;
   overflow: hidden;
   padding: 0;
+}
+.editor-wrap.detached-current::after {
+  content: "이 메모는 분리된 창에서 편집 중입니다";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--main) 82%, transparent);
+  pointer-events: none;
 }
 [data-note-color="default"] { color: var(--ink); }
 [data-note-color="red"] { color: var(--note-red); }
@@ -665,3 +718,4 @@ footer {
     width: 100%;
   }
 }
+::highlight(saved-editor-selection) { background: #5865f2; color: #fff; }

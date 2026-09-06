@@ -1,5 +1,7 @@
 import "./style.css";
-const api = () => window.go?.main?.App,
+import { Call, Events } from "/wails/runtime.js";
+const apiObject=new Proxy({}, {get:(_,method)=>(...args)=>Call.ByName(`main.App.${String(method)}`,...args)});
+const api = () => apiObject,
   $ = (s) => document.querySelector(s),
   id = () => Date.now().toString() + Math.random().toString(16).slice(2),
   esc = (s) =>
@@ -17,6 +19,8 @@ let store = { groups: [], channels: [], lastGroupId: "", lastChannelId: "", last
   askResolve = null;
 let closeHandlerRegistered=false;
 let dragItem=null, suppressClickUntil=0;
+let tabDragId="", savedEditorRange=null;
+const detachedTabs=new Set();
 const channel = () =>
     store.channels.find((c) => c.id === store.lastChannelId) ||
     store.channels[0],
@@ -38,7 +42,10 @@ const newNote = () => ({
 });
 function withoutLegacyTitle(content,title){const box=document.createElement("div");box.innerHTML=content||"";const first=box.firstElementChild;if(first?.tagName==="H1"&&first.textContent.trim()===(title||"").trim())first.remove();return box.innerHTML||"<p></p>"}
 $("#app").innerHTML = `<div class="shell"><aside class="rail"><button class="settings-icon" id="openSettings" title="설정">⚙</button><div id="channels"></div><button class="round" id="addChannel">＋</button></aside><aside class="sidebar"><header><strong id="channelName"></strong></header><div class="section-head"><button id="toggleNotes">⌄ 메모장</button><div><button id="bulkDelete" title="여러 메모 삭제">🗑</button><button id="addNote">＋</button></div></div><div id="bulkBar"><span id="selectedCount">0개 선택</span><button id="deleteSelected">삭제</button><button id="cancelSelect">취소</button></div><div id="notes"></div></aside><main><header class="top"><input id="title"><button id="export">내보내기</button></header><div class="toolbar"><button data-cmd="bold"><b>B</b></button><button data-cmd="italic"><i>I</i></button><button data-cmd="underline"><u>U</u></button><select id="textColor" title="텍스트 색상"><option value="default">기본색</option><option value="red">빨강</option><option value="orange">주황</option><option value="green">초록</option><option value="blue">파랑</option><option value="purple">보라</option></select><select id="font"></select><div class="size-box"><input id="size" type="number" min="6" max="144" value="10"><span>pt</span><div class="size-presets">${[8,9,10,11,12,14,16,18,20,24].map(x=>`<button data-size="${x}">${x}</button>`).join("")}</div></div><button id="image">이미지 삽입</button><div id="imageTools"><input id="imageWidth" type="number" min="5" max="100" value="100"><span>%</span><button data-align="left">왼쪽</button><button data-align="center">가운데</button><button data-align="right">오른쪽</button></div></div><div class="editor-wrap"><div id="editor" contenteditable="true" spellcheck="true"></div><div id="resizeBox"><i data-handle="nw"></i><i data-handle="ne"></i><i data-handle="sw"></i><i data-handle="se"></i></div></div><footer><span id="status">준비됨</span><span>이미지 붙여넣기·드래그 지원</span></footer></main></div><div id="context" class="context-menu"></div><div id="modal" class="modal"><div class="dialog"><header><h2>설정</h2><button id="closeSettings">×</button></header><section><label>테마</label><select id="theme"><option value="system">시스템 설정에 따르기</option><option value="dark">어두운 테마</option><option value="light">밝은 테마</option></select></section><section><h3>데이터 관리</h3><div class="settings-actions"><button id="backup">전체 백업</button><button id="restore">전체 복원</button></div></section></div></div><div id="askModal" class="modal"><div class="dialog ask-dialog"><header><h2 id="askTitle"></h2></header><section><p id="askMessage"></p><input id="askInput"><div class="ask-actions"><button id="askCancel">취소</button><button id="askOK">확인</button></div></section></div></div>`;
+$("#editor").setAttribute("data-file-drop-target", "");
 $("#export").textContent = "다른 위치에 저장";
+$(".top").insertAdjacentHTML("afterbegin", '<button id="toggleChannelsPane" title="채널 영역 숨기기">☰</button><button id="toggleNotesPane" title="카테고리·메모 영역 숨기기">▤</button>');
+$(".top").insertAdjacentHTML("afterend", '<div id="tabs" class="tabs"></div>');
 $("#export").insertAdjacentHTML("beforebegin", '<button id="import">불러오기</button>');
 $("#import").insertAdjacentHTML("beforebegin", '<button id="manualSave">저장</button>');
 $("#manualSave").insertAdjacentHTML("beforebegin", '<button id="openSearch">검색</button>');
@@ -53,6 +60,7 @@ $("#showGroupPopup").parentElement.insertAdjacentHTML("afterend",'<label class="
 document.body.insertAdjacentHTML("beforeend",'<div id="startupGroupModal" class="modal"><div class="dialog group-dialog"><header><h2>작업할 그룹 선택</h2></header><section><p>이 창에서 편집할 그룹을 선택하세요.</p><div id="startupGroups"></div></section></div></div><div id="imageEditModal" class="modal"><div class="dialog image-dialog"><header><h2>이미지 편집하기</h2><button id="closeImageEdit">×</button></header><section><div class="crop-stage"><img id="cropImage"></div><div class="zoom-row"><span>▧</span><input id="cropZoom" type="range" min="100" max="400" value="100"><span>▣</span></div><div class="crop-actions"><button id="cropReset">재설정</button><span></span><button id="cropCancel">취소</button><button id="cropApply">적용하기</button></div></section></div></div>');
 document.body.insertAdjacentHTML("beforeend",'<div id="searchModal" class="modal"><div class="dialog search-dialog"><header><h2>찾기 및 바꾸기</h2><button id="closeSearch">×</button></header><section><div class="search-form"><label>찾을 내용<input id="searchQuery" autocomplete="off"></label><label>바꿀 내용<input id="replaceText" autocomplete="off"></label><label>검색 범위<select id="searchScope"><option value="note">현재 메모장</option><option value="category">현재 카테고리</option><option value="channel">현재 채널</option><option value="group">현재 그룹</option><option value="all">전체</option></select></label><div class="search-actions"><button id="runSearch">찾기</button><button id="runReplace">범위 내 모두 바꾸기</button></div></div><div id="searchSummary"></div><div id="searchResults"></div></section></div></div>');
 function normalize() {
+  if (!store.imageInsertWidth || store.imageInsertWidth < 5 || store.imageInsertWidth > 100) store.imageInsertWidth = 100;
   if (!store.groups?.length) store.groups=[{id:id(),name:"기본 그룹"}];
   if (!store.groups.some(g=>g.id===store.lastGroupId)) store.lastGroupId=store.groups[0].id;
   if (!store.channels?.length) {
@@ -74,6 +82,9 @@ function normalize() {
   if (!c.categories.some((g)=>g.id===store.lastCategoryId)) store.lastCategoryId=c.categories[0].id;
   if (!allNotes().length) category().notes.push(newNote());
   if (!allNotes().some((n) => n.id === store.lastNoteId)) store.lastNoteId = allNotes()[0].id;
+  const groupIDs=new Set(store.channels.filter(c=>c.groupId===store.lastGroupId).flatMap(c=>c.categories.flatMap(g=>g.notes.map(n=>n.id))));
+  store.openNoteIds=(store.openNoteIds||[]).filter(nid=>groupIDs.has(nid));
+  if(store.lastNoteId&&!store.openNoteIds.includes(store.lastNoteId))store.openNoteIds.push(store.lastNoteId);
 }
 function applyTheme() {
   document.documentElement.dataset.theme = store.theme;
@@ -86,6 +97,12 @@ function render() {
   const c = channel(),
     n = note();
   applyTheme();
+  $(".shell").classList.toggle("channels-hidden",store.hideChannels===true);
+  $(".shell").classList.toggle("notes-hidden",store.hideNotes===true);
+  $("#toggleChannelsPane").classList.toggle("pane-hidden",store.hideChannels===true);
+  $("#toggleNotesPane").classList.toggle("pane-hidden",store.hideNotes===true);
+  $("#toggleChannelsPane").title=store.hideChannels?"채널 영역 펼치기":"채널 영역 숨기기";
+  $("#toggleNotesPane").title=store.hideNotes?"카테고리·메모 영역 펼치기":"카테고리·메모 영역 숨기기";
   $("#groupButton").textContent=group().name.slice(0,3);
   $("#groupButton").title=group().name;
   $("#groupDataSelect").innerHTML=store.groups.map(g=>`<option value="${g.id}" ${g.id===store.lastGroupId?'selected':''}>${esc(g.name)}</option>`).join('');
@@ -101,7 +118,11 @@ function render() {
   $("#bulkBar").classList.toggle("show", selectMode);
   $("#selectedCount").textContent = `${selectedNotes.size}개 선택`;
   $("#notes").innerHTML = c.categories.map(g=>`<section class="category ${g.id===store.lastCategoryId?'current':''}" draggable="true" data-category-id="${g.id}"><div class="category-head"><button class="category-name">⌄ ${esc(g.name)}</button><button class="category-add" title="이 카테고리에 메모 추가">＋</button></div><div class="category-notes">${g.notes.map(x=>selectMode?`<label class="note selectable" draggable="false" data-id="${x.id}"><input type="checkbox" ${selectedNotes.has(x.id)?"checked":""}><span>#</span><b>${esc(x.name||x.title)}</b></label>`:`<button class="note ${x.id===n.id?"active":""}" draggable="true" data-id="${x.id}"><span>#</span><b>${esc(x.name||x.title)}</b></button>`).join("")}</div></section>`).join("");
+  renderTabs();
   $("#title").value = n.title || "";
+  $("#title").disabled=detachedTabs.has(n.id);
+  $("#editor").contentEditable=detachedTabs.has(n.id)?"false":"true";
+  $(".editor-wrap").classList.toggle("detached-current",detachedTabs.has(n.id));
   if(n.contentLoaded)n.content=withoutLegacyTitle(n.content,n.title);
   $("#editor").innerHTML = n.content || "";
   ensureNoteLoaded(n.id);
@@ -126,6 +147,9 @@ function render() {
   });
   initListDragging();
 }
+
+$("#toggleChannelsPane").onclick=()=>{store.hideChannels=!store.hideChannels;render();mark()};
+$("#toggleNotesPane").onclick=()=>{store.hideNotes=!store.hideNotes;render();mark()};
 
 function moveBeforeOrAfter(items, sourceId, targetId, after) {
   const from=items.findIndex(x=>x.id===sourceId), target=items.findIndex(x=>x.id===targetId);
@@ -311,6 +335,7 @@ async function switchChannel(cid) {
   store.lastChannelId = cid;
   store.lastCategoryId = channel().categories[0]?.id || "";
   store.lastNoteId = allNotes()[0]?.id || "";
+  openTab(store.lastNoteId);
   render();
   mark();
 }
@@ -318,10 +343,44 @@ async function switchNote(nid) {
   await save();
   const previous=note();if(previous&&previous.id!==nid){previous.content="";previous.contentLoaded=false}
   store.lastNoteId = nid;
+  openTab(nid);
   const owner=channel().categories.find(g=>g.notes.some(n=>n.id===nid));
   if(owner) store.lastCategoryId=owner.id;
   render();
   mark();
+}
+function noteRecord(nid){
+  for(const c of store.channels)if(c.groupId===store.lastGroupId)for(const cat of c.categories||[]){const n=(cat.notes||[]).find(n=>n.id===nid);if(n)return{channel:c,category:cat,note:n}}
+  return null;
+}
+function openTab(nid){if(nid&&!store.openNoteIds.includes(nid))store.openNoteIds.push(nid)}
+function renderTabs(){
+  const tabs=$("#tabs");
+  tabs.innerHTML=store.openNoteIds.map(nid=>{const r=noteRecord(nid);if(!r)return'';return `<div class="memo-tab ${nid===store.lastNoteId?'active':''} ${detachedTabs.has(nid)?'detached':''}" draggable="true" data-id="${nid}" title="${esc(r.note.title)}"><span>${esc(r.note.name||r.note.title)}</span>${detachedTabs.has(nid)?'<i title="분리된 창에서 편집 중">↗</i>':'<button title="탭 닫기">×</button>'}</div>`}).join('');
+  tabs.querySelectorAll('.memo-tab').forEach(tab=>{
+    const nid=tab.dataset.id;
+    tab.onclick=e=>{if(e.target.closest('button')||detachedTabs.has(nid))return;switchTab(nid)};
+    tab.querySelector('button')?.addEventListener('click',e=>{e.stopPropagation();closeTab(nid)});
+    tab.ondragstart=e=>{if(detachedTabs.has(nid)){e.preventDefault();return}capture();tabDragId=nid;tab.classList.add('dragging');e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',nid)};
+    tab.ondragover=e=>{if(!tabDragId||tabDragId===nid)return;e.preventDefault();e.dataTransfer.dropEffect='move';tab.classList.add('drop-tab')};
+    tab.ondragleave=()=>tab.classList.remove('drop-tab');
+    tab.ondrop=e=>{e.preventDefault();const from=store.openNoteIds.indexOf(tabDragId),to=store.openNoteIds.indexOf(nid);if(from>=0&&to>=0){const[m]=store.openNoteIds.splice(from,1);store.openNoteIds.splice(to,0,m)}tabDragId='';renderTabs();mark()};
+    tab.ondragend=e=>{tab.classList.remove('dragging');const outside=e.clientX<=0||e.clientY<=0||e.clientX>=innerWidth-1||e.clientY>=innerHeight-1;if(tabDragId===nid&&outside)detachTab(nid);tabDragId=''};
+  });
+}
+async function switchTab(nid){
+  const r=noteRecord(nid);if(!r)return;
+  await save();const previous=note();if(previous&&previous.id!==nid){previous.content='';previous.contentLoaded=false}
+  store.lastChannelId=r.channel.id;store.lastCategoryId=r.category.id;store.lastNoteId=nid;render();mark();
+}
+function closeTab(nid){
+  const index=store.openNoteIds.indexOf(nid);store.openNoteIds=store.openNoteIds.filter(id=>id!==nid);
+  if(store.lastNoteId===nid){const next=store.openNoteIds[Math.min(index,store.openNoteIds.length-1)];if(next)return switchTab(next);openTab(nid)}
+  renderTabs();mark();
+}
+async function detachTab(nid){
+  const r=noteRecord(nid);if(!r)return;await save();
+  try{await api().OpenDetachedNote(nid,r.note.title);detachedTabs.add(nid);render();$("#status").textContent='메모를 별도 창으로 분리했습니다.'}catch(e){await ask('창 분리 실패',String(e))}
 }
 function capture() {
   const n = note();
@@ -403,7 +462,7 @@ async function renderGroupPopover() {
   $('#addGroup').onclick=addGroup;
 }
 $("#groupButton").onclick=async(e)=>{e.stopPropagation();await renderGroupPopover();$("#groupPopover").classList.toggle("show")};
-async function selectGroup(gid){await save();try{await api().AcquireGroup(gid)}catch(e){return ask("선택할 수 없음",String(e))}store=await api().ReloadStore();normalize();store.lastGroupId=gid;const c=visibleChannels()[0];store.lastChannelId=c?.id||'';store.lastCategoryId=c?.categories[0]?.id||'';store.lastNoteId=c?.categories.flatMap(g=>g.notes)[0]?.id||'';$("#groupPopover").classList.remove("show");$("#startupGroupModal").classList.remove("show");render();mark()}
+async function selectGroup(gid){await save();try{await api().AcquireGroup(gid)}catch(e){return ask("선택할 수 없음",String(e))}store=await api().ReloadStore();normalize();store.lastGroupId=gid;const c=visibleChannels()[0];store.lastChannelId=c?.id||'';store.lastCategoryId=c?.categories[0]?.id||'';store.lastNoteId=c?.categories.flatMap(g=>g.notes)[0]?.id||'';store.openNoteIds=store.lastNoteId?[store.lastNoteId]:[];detachedTabs.clear();$("#groupPopover").classList.remove("show");$("#startupGroupModal").classList.remove("show");render();mark()}
 async function addGroup(){const v=await ask("새 그룹","그룹 이름을 입력하세요.","새 그룹");if(!v?.trim())return;const g={id:id(),name:v.trim()};store.groups.push(g);store.lastGroupId=g.id;$("#groupPopover").classList.remove("show");render();mark();await selectGroup(g.id)}
 async function renameGroup(gid){if(gid!==store.lastGroupId)await selectGroup(gid);const g=store.groups.find(x=>x.id===gid),v=await ask("그룹 명칭 수정","새 그룹 이름을 입력하세요.",g.name);if(v?.trim()){g.name=v.trim();render();await renderGroupPopover();mark()}}
 async function deleteGroup(gid){if(store.groups.length===1)return ask("삭제할 수 없음","마지막 그룹은 삭제할 수 없습니다.");if(gid!==store.lastGroupId)await selectGroup(gid);const g=store.groups.find(x=>x.id===gid),count=store.channels.filter(c=>c.groupId===gid).length;if(!(await ask("그룹 삭제",`‘${g.name}’ 그룹과 포함된 채널 ${count}개를 삭제할까요?`)))return;store.groups=store.groups.filter(x=>x.id!==gid);store.channels=store.channels.filter(c=>c.groupId!==gid);const next=store.groups[0].id;store.lastGroupId=next;$("#groupPopover").classList.remove("show");render();mark();await save();await selectGroup(next)}
@@ -545,10 +604,11 @@ $("#editor").oninput = () => {
 };
 document
   .querySelectorAll("[data-cmd]")
-  .forEach((b) => (b.onclick = () => document.execCommand(b.dataset.cmd)));
+  .forEach((b) => {b.onmousedown=e=>e.preventDefault();b.onclick = () => {restoreEditorSelection();document.execCommand(b.dataset.cmd);rememberEditorSelection();mark()}});
 $("#font").onchange = (e) =>
-  document.execCommand("fontName", false, e.target.value);
+  (restoreEditorSelection(),document.execCommand("fontName", false, e.target.value),rememberEditorSelection(),mark());
 $("#textColor").onchange = (e) => {
+  restoreEditorSelection();
   const selection = getSelection();
   if (!selection.rangeCount || selection.isCollapsed) return;
   const range = selection.getRangeAt(0), span = document.createElement("span");
@@ -558,8 +618,26 @@ $("#textColor").onchange = (e) => {
   selection.removeAllRanges();
   mark();
 };
+function rememberEditorSelection(){
+  const selection=getSelection();if(!selection.rangeCount)return;
+  const range=selection.getRangeAt(0),node=range.commonAncestorContainer;
+  if($("#editor").contains(node.nodeType===Node.ELEMENT_NODE?node:node.parentElement))savedEditorRange=range.cloneRange();
+}
+function showSavedEditorSelection(){
+  if(!savedEditorRange||!globalThis.Highlight||!globalThis.CSS?.highlights)return;
+  CSS.highlights.set("saved-editor-selection",new Highlight(savedEditorRange.cloneRange()));
+}
+function hideSavedEditorSelection(){globalThis.CSS?.highlights?.delete("saved-editor-selection")}
+function restoreEditorSelection(){
+  if(!savedEditorRange)return false;
+  const selection=getSelection();selection.removeAllRanges();selection.addRange(savedEditorRange.cloneRange());return true;
+}
+document.addEventListener('selectionchange',rememberEditorSelection);
 function fontSize(pt) {
-  if (!getSelection().rangeCount) return;
+  const preserved=savedEditorRange?.cloneRange();
+  if(!preserved)return;
+  $("#editor").focus({preventScroll:true});
+  const selection=getSelection();selection.removeAllRanges();selection.addRange(preserved);
   document.execCommand("fontSize", false, "7");
   $("#editor")
     .querySelectorAll('font[size="7"]')
@@ -567,13 +645,23 @@ function fontSize(pt) {
       x.removeAttribute("size");
       x.style.fontSize = pt + "pt";
     });
+  rememberEditorSelection();
+  showSavedEditorSelection();
   mark();
 }
+$("#size").onpointerdown = () => {rememberEditorSelection();showSavedEditorSelection()};
+$("#size").onfocus = showSavedEditorSelection;
 $("#size").onchange = (e) =>
   fontSize(Math.max(6, Math.min(144, +e.target.value || 10)));
+$("#size").onkeydown = (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  fontSize(Math.max(6, Math.min(144, +e.currentTarget.value || 10)));
+};
+$("#editor").addEventListener("pointerdown",hideSavedEditorSelection);
 document.querySelectorAll("[data-size]").forEach(
   (b) =>
-    (b.onclick = () => {
+    (b.onmousedown=e=>e.preventDefault(),b.onclick = () => {
       $("#size").value = b.dataset.size;
       fontSize(+b.dataset.size);
     }),
@@ -618,10 +706,15 @@ async function insertImages(items) {
     document.execCommand(
       "insertHTML",
       false,
-      `<img src="${src}" style="width:100%;margin-left:auto;margin-right:auto"><p><br></p>`,
+      `<img src="${src}" style="width:${store.imageInsertWidth || 100}%;margin-left:auto;margin-right:auto"><p><br></p>`,
     );
   }
   mark();
+}
+function placeEditorCaretAt(x,y){
+  const range=document.caretRangeFromPoint?.(x,y);
+  if(!range||!$("#editor").contains(range.startContainer))return;
+  const selection=getSelection();selection.removeAllRanges();selection.addRange(range);savedEditorRange=range.cloneRange();
 }
 $("#image").onclick = async () =>
   insertImages((await api().SelectImages()) || []);
@@ -636,11 +729,12 @@ $("#editor").onpaste = (e) => {
 };
 $("#editor").ondragover = (e) => e.preventDefault();
 $("#editor").ondrop = (e) => {
+  e.preventDefault();
+  if (window._wails?.flags?.enableFileDrop) return;
   const f = [...e.dataTransfer.files].filter((x) =>
     x.type.startsWith("image/"),
   );
   if (f.length) {
-    e.preventDefault();
     insertImages(f);
   }
 };
@@ -685,11 +779,16 @@ document.querySelectorAll("#resizeBox i").forEach((handle) => {
 });
 $("#imageWidth").oninput = (e) => {
   if (selectedImage) {
-    selectedImage.style.width =
-      Math.max(5, Math.min(100, +e.target.value)) + "%";
+    const width = Math.max(5, Math.min(100, +e.target.value || 100));
+    selectedImage.style.width = width + "%";
+    selectedImage.style.height = "auto";
+    selectedImage.style.maxWidth = "100%";
+    store.imageInsertWidth = width;
+    updateResizeBox();
     mark();
   }
 };
+$("#imageWidth").onchange = (e) => api().SetImageInsertWidth(Math.max(5, Math.min(100, +e.target.value || 100)));
 document.querySelectorAll("[data-align]").forEach(
   (b) =>
     (b.onclick = () => {
@@ -734,7 +833,7 @@ $("#backup").onclick = async () => {
   if (p) $("#status").textContent = "백업 완료 · " + p;
 };
 $("#backupGroup").onclick=async()=>{await save();const gid=$("#groupDataSelect").value,p=await api().BackupGroup(gid);if(p)$("#status").textContent="그룹 백업 완료 · "+p};
-$("#restoreGroup").onclick=async()=>{const bundle=await api().RestoreGroup();if(!bundle?.group?.id)return;await save();store.groups.push(bundle.group);store.channels.push(...(bundle.channels||[]));render();mark();await selectGroup(bundle.group.id);$("#modal").classList.remove("show");$("#status").textContent="그룹 복원 완료"};
+$("#restoreGroup").onclick=async()=>{await save();const bundle=await api().RestoreGroup();if(!bundle?.group?.id)return;store.groups.push(bundle.group);store.channels.push(...(bundle.channels||[]));render();mark();await selectGroup(bundle.group.id);$("#modal").classList.remove("show");$("#status").textContent="그룹 복원 완료"};
 $("#restore").onclick = async () => {
   if (!(await ask("전체 복원", "현재 데이터를 백업 파일로 교체할까요?"))) return;
   const s = await api().RestoreAll();
@@ -779,7 +878,14 @@ async function boot() {
       .map((f) => `<option value="${esc(f)}">${esc(f)}</option>`)
       .join("");
     normalize();render();
-    if(!closeHandlerRegistered&&window.runtime?.EventsOn){closeHandlerRegistered=true;window.runtime.EventsOn("app:before-close",async()=>{capture();dirty=true;clearTimeout(saveTimer);try{const t=await api().SaveStore(store);dirty=false;$("#status").textContent=`${t} · 종료 전 저장 완료`;await api().FinishClose()}catch(e){$("#status").textContent="종료 전 저장 실패: "+e}})}
+    if(!closeHandlerRegistered){
+      closeHandlerRegistered=true;
+      Events.On("app:before-close",async()=>{capture();dirty=true;clearTimeout(saveTimer);try{const t=await api().SaveStore(store);dirty=false;$("#status").textContent=`${t} · 종료 전 저장 완료`;await api().FinishClose()}catch(e){$("#status").textContent="종료 전 저장 실패: "+e}});
+      Events.On("note:reattach",event=>{const nid=event.data;detachedTabs.delete(nid);openTab(nid);render();mark();$("#status").textContent='분리된 메모가 탭으로 돌아왔습니다.'});
+      Events.On("note:updated",event=>{const data=event.data||{},r=noteRecord(data.noteId);if(!r)return;r.note.title=data.title||r.note.title;if(r.note.titleLinked)r.note.name=r.note.title;r.note.content=data.content;r.note.contentLoaded=true;if(!dirty||store.lastNoteId!==data.noteId){if(store.lastNoteId===data.noteId)render();else renderTabs()}});
+      Events.On("editor:images-dropped",event=>{const data=event.data||{};if(data.target!=="main")return;placeEditorCaretAt(data.x,data.y);insertImages(data.images||[])});
+      Events.On("image:insert-width",event=>{const width=+event.data;if(width>=5&&width<=100)store.imageInsertWidth=width});
+    }
     if(store.showGroupPopup!==false) await showStartupGroups();
     else { try{await api().AcquireGroup(store.lastGroupId)}catch{await showStartupGroups()} }
   } catch {
