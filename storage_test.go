@@ -110,3 +110,35 @@ func TestFolderStoreRecoversWithCorruptSettings(t *testing.T) {
 		t.Fatalf("existing group was replaced: %+v", loaded.Groups)
 	}
 }
+
+func TestFolderStorePreservesListOrder(t *testing.T) {
+	dir := t.TempDir()
+	s := defaultStore()
+	c := s.Channels[0]
+	c2 := c
+	c2.ID = "channel-second"
+	c2.Name = "second"
+	c2.Categories = nil
+	s.Channels = append([]Channel{c2}, c)
+	s.Channels[1].Categories = []Category{
+		{ID: "category-second", Name: "second", Notes: []Note{{ID: "note-b", Name: "B"}, {ID: "note-a", Name: "A"}}},
+		{ID: "category-first", Name: "first", Notes: []Note{{ID: "note-c", Name: "C"}}},
+	}
+	if err := writeFolderStore(dir, s, ""); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadFolderStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Channels[0].ID != "channel-second" || loaded.Channels[1].ID != c.ID {
+		t.Fatalf("channel order changed: %+v", loaded.Channels)
+	}
+	categories := loaded.Channels[1].Categories
+	if categories[0].ID != "category-second" || categories[1].ID != "category-first" {
+		t.Fatalf("category order changed: %+v", categories)
+	}
+	if categories[0].Notes[0].ID != "note-b" || categories[0].Notes[1].ID != "note-a" {
+		t.Fatalf("note order changed: %+v", categories[0].Notes)
+	}
+}

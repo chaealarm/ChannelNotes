@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -112,6 +113,23 @@ func loadFolderStore(dir string) (Store, error) {
 			s.Channels = append(s.Channels, c)
 		}
 	}
+	sort.SliceStable(s.Groups, func(i, j int) bool { return s.Groups[i].ID < s.Groups[j].ID })
+	sort.SliceStable(s.Channels, func(i, j int) bool {
+		if s.Channels[i].GroupID != s.Channels[j].GroupID {
+			return s.Channels[i].GroupID < s.Channels[j].GroupID
+		}
+		return s.Channels[i].Order < s.Channels[j].Order
+	})
+	for ci := range s.Channels {
+		sort.SliceStable(s.Channels[ci].Categories, func(i, j int) bool {
+			return s.Channels[ci].Categories[i].Order < s.Channels[ci].Categories[j].Order
+		})
+		for gi := range s.Channels[ci].Categories {
+			sort.SliceStable(s.Channels[ci].Categories[gi].Notes, func(i, j int) bool {
+				return s.Channels[ci].Categories[gi].Notes[i].Order < s.Channels[ci].Categories[gi].Notes[j].Order
+			})
+		}
+	}
 	if len(s.Groups) == 0 {
 		return s, errors.New("저장된 그룹이 없습니다")
 	}
@@ -200,6 +218,7 @@ func writeFolderStore(dir string, s Store, locked string) error {
 			return err
 		}
 		keepChannels := map[string]bool{}
+		channelOrder := 0
 		for _, c := range s.Channels {
 			if c.GroupID != g.ID {
 				continue
@@ -207,25 +226,29 @@ func writeFolderStore(dir string, s Store, locked string) error {
 			keepChannels[c.ID] = true
 			cp := channelPath(dir, g.ID, c.ID)
 			cm := c
+			cm.Order = channelOrder
+			channelOrder++
 			cm.Categories = nil
 			cm.Notes = nil
 			if err := atomicJSON(filepath.Join(cp, "channel.json"), cm); err != nil {
 				return err
 			}
 			keepCats := map[string]bool{}
-			for _, cat := range c.Categories {
+			for categoryOrder, cat := range c.Categories {
 				keepCats[cat.ID] = true
 				cap := categoryPath(dir, g.ID, c.ID, cat.ID)
 				catm := cat
+				catm.Order = categoryOrder
 				catm.Notes = nil
 				if err := atomicJSON(filepath.Join(cap, "category.json"), catm); err != nil {
 					return err
 				}
 				keepNotes := map[string]bool{}
-				for _, n := range cat.Notes {
+				for noteOrder, n := range cat.Notes {
 					keepNotes[n.ID] = true
 					np := notePath(dir, g.ID, c.ID, cat.ID, n.ID)
 					nm := n
+					nm.Order = noteOrder
 					nm.Content = ""
 					nm.ContentLoaded = false
 					if err := atomicJSON(filepath.Join(np, "meta.json"), nm); err != nil {

@@ -30,10 +30,12 @@ type Note struct {
 	Content       string `json:"content"`
 	ContentLoaded bool   `json:"contentLoaded,omitempty"`
 	UpdatedAt     string `json:"updatedAt"`
+	Order         int    `json:"order"`
 }
 type Category struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
+	Order int    `json:"order"`
 	Notes []Note `json:"notes"`
 }
 type Group struct {
@@ -45,6 +47,7 @@ type Channel struct {
 	Name       string     `json:"name"`
 	Image      string     `json:"image"`
 	GroupID    string     `json:"groupId"`
+	Order      int        `json:"order"`
 	Notes      []Note     `json:"notes,omitempty"`
 	Categories []Category `json:"categories"`
 }
@@ -287,6 +290,126 @@ func (a *App) LockedGroups() []string {
 	}
 	return result
 }
+
+func (a *App) acquireAdditionalGroupUnlocked(gid string) (*os.File, error) {
+	path := a.lockPath(gid)
+	open := func() (*os.File, error) {
+		return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	}
+	f, err := open()
+	if err != nil {
+		b, _ := os.ReadFile(path)
+		pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+		if pid > 0 && processAlive(pid) {
+			return nil, errors.New("다른 창에서 사용 중인 그룹입니다")
+		}
+		_ = os.Remove(path)
+		f, err = open()
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err = f.WriteString(strconv.Itoa(os.Getpid())); err != nil {
+		f.Close()
+		_ = os.Remove(path)
+		return nil, err
+	}
+	_ = f.Sync()
+	return f, nil
+}
+
+// MoveChannelToGroup moves the channel directory while holding both the
+// currently edited group lock and a temporary destination lock. This keeps a
+// second application process from modifying the destination between the UI's
+// lock check and the actual move.
+func (a *App) MoveChannelToGroup(channelID, targetGroupID string, s Store) (Store, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if targetGroupID == a.lockGroup {
+		return s, errors.New("이미 현재 그룹에 있는 채널입니다")
+	}
+	var moved Channel
+	found := false
+	sourceCount := 0
+	for _, c := range s.Channels {
+		if c.GroupID == a.lockGroup {
+			sourceCount++
+		}
+		if c.ID == channelID && c.GroupID == a.lockGroup {
+			moved, found = c, true
+		}
+	}
+	if !found {
+		return s, errors.New("현재 그룹에서 채널을 찾을 수 없습니다")
+	}
+	if sourceCount <= 1 {
+		return s, errors.New("그룹의 마지막 채널은 이동할 수 없습니다")
+	}
+	targetExists := false
+	for _, g := range s.Groups {
+		if g.ID == targetGroupID {
+			targetExists = true
+			break
+		}
+	}
+	if !targetExists || !validID(targetGroupID) || !validID(channelID) {
+		return s, errors.New("대상 그룹을 찾을 수 없습니다")
+	}
+
+	// First flush every pending edit to the source group.
+	a.store = s
+	if err := a.persistUnlocked(); err != nil {
+		return s, err
+	}
+	targetLock, err := a.acquireAdditionalGroupUnlocked(targetGroupID)
+	if err != nil {
+		return s, err
+	}
+	defer func() {
+		targetLock.Close()
+		_ = os.Remove(a.lockPath(targetGroupID))
+	}()
+
+	sourcePath := channelPath(a.dir, a.lockGroup, channelID)
+	targetPath := channelPath(a.dir, targetGroupID, channelID)
+	if err = os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		return s, err
+	}
+	if _, err = os.Stat(targetPath); err == nil {
+		return s, errors.New("대상 그룹에 같은 채널 데이터가 이미 있습니다")
+	}
+	if err = os.Rename(sourcePath, targetPath); err != nil {
+		return s, err
+	}
+	moved.GroupID = targetGroupID
+	moved.Categories = nil
+	moved.Notes = nil
+	if err = atomicJSON(filepath.Join(targetPath, "channel.json"), moved); err != nil {
+		_ = os.Rename(targetPath, sourcePath)
+		return s, err
+	}
+
+	loaded, err := loadFolderStore(a.dir)
+	if err != nil {
+		return s, err
+	}
+	loaded.Theme = s.Theme
+	loaded.ShowGroupPopup = s.ShowGroupPopup
+	loaded.PeriodicAutoSave = s.PeriodicAutoSave
+	loaded.SettingsVersion = s.SettingsVersion
+	loaded.LastGroupID = s.LastGroupID
+	loaded.LastChannelID = s.LastChannelID
+	loaded.LastCategoryID = s.LastCategoryID
+	loaded.LastNoteID = s.LastNoteID
+	repairLastSelection(&loaded)
+	a.store = loaded
+	if err = writeFolderStore(a.dir, a.store, targetGroupID); err != nil {
+		return s, err
+	}
+	a.stripContents()
+	return a.store, nil
+}
+
 func (a *App) SaveStore(s Store) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
