@@ -1,5 +1,6 @@
 import "./detached.css";
 import { Call, Events } from "/wails/runtime.js";
+import { mountWindowChrome } from "./windowChrome.js";
 
 const api=new Proxy({}, {get:(_,method)=>(...args)=>Call.ByName(`main.App.${String(method)}`,...args)});
 const noteID=new URLSearchParams(location.search).get("note")||"";
@@ -7,6 +8,7 @@ const $=selector=>document.querySelector(selector);
 let saveTimer=null,savedRange=null,loaded=false,selectedImage=null,imageInsertWidth=100;
 
 $("#detachedApp").innerHTML=`<div class="detached-shell"><header><input id="detachedTitle"><button id="detachedSave" title="Ctrl+S">저장</button><button id="reattach" title="메인 창으로 합치기">↙ 메인 창으로</button></header><div class="detached-toolbar"><button data-cmd="bold"><b>B</b></button><button data-cmd="italic"><i>I</i></button><button data-cmd="underline"><u>U</u></button><select id="detachedColor"><option value="default">기본색</option><option value="red">빨강</option><option value="orange">주황</option><option value="green">초록</option><option value="blue">파랑</option><option value="purple">보라</option></select><select id="detachedFont"></select><label><input id="detachedSize" type="number" min="6" max="144" value="10"> pt</label><div class="detached-presets">${[8,9,10,11,12,14,16,18,20,24].map(size=>`<button data-size="${size}">${size}</button>`).join("")}</div><button id="detachedImage">이미지 삽입</button><div id="detachedImageTools"><input id="detachedImageWidth" type="number" min="5" max="100" value="100"><span>%</span><button data-align="left">왼쪽</button><button data-align="center">가운데</button><button data-align="right">오른쪽</button></div></div><div class="detached-editor-wrap"><div id="detachedEditor" contenteditable="true" spellcheck="true"></div><div id="detachedResizeBox"><i data-handle="nw"></i><i data-handle="ne"></i><i data-handle="sw"></i><i data-handle="se"></i></div></div><footer id="detachedStatus">불러오는 중…</footer></div>`;
+mountWindowChrome($("#detachedApp"), "note-" + noteID, api);
 $("#detachedEditor").setAttribute("data-file-drop-target", "");
 
 function rememberSelection(){const s=getSelection();if(!s.rangeCount)return;const r=s.getRangeAt(0),n=r.commonAncestorContainer;if($("#detachedEditor").contains(n.nodeType===Node.ELEMENT_NODE?n:n.parentElement))savedRange=r.cloneRange()}

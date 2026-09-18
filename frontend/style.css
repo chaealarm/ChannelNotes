@@ -74,7 +74,7 @@ select {
 .shell {
   display: grid;
   grid-template-columns: 72px 250px minmax(0, 1fr);
-  height: 100vh;
+  height: calc(100vh - 38px);
   min-height: 0;
 }
 .shell.channels-hidden { grid-template-columns: 0 250px minmax(0, 1fr); }
@@ -719,3 +719,8 @@ footer {
   }
 }
 ::highlight(saved-editor-selection) { background: #5865f2; color: #fff; }
+.program-icon-row{display:flex;align-items:center;gap:9px;margin-top:8px}
+.program-icon-row img{width:42px;height:42px;object-fit:contain;border-radius:8px;background:#fff;border:1px solid var(--line)}
+.program-icon-row button{background:var(--raised);border:0;border-radius:5px;color:var(--text);padding:8px 10px;cursor:pointer}
+.program-icon-row button:hover{background:var(--accent);color:#fff}
+.program-icon-setting small{display:block;margin-top:7px;color:var(--muted)}
