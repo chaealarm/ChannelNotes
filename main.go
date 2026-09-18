@@ -11,6 +11,9 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed default-icon.png
+var defaultIcon []byte
+
 func main() {
 	service := NewApp()
 	wailsApp := application.New(application.Options{
@@ -21,10 +24,11 @@ func main() {
 	})
 	service.wails = wailsApp
 	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name: "main", Title: "채널 노트", Width: 1280, Height: 820, MinWidth: 900, MinHeight: 600,
+		Name: "main", Title: "Channel Notes", Width: 1280, Height: 820, MinWidth: 900, MinHeight: 600, Frameless: true,
 		URL: "/", BackgroundColour: application.NewRGBA(30, 31, 34, 255), EnableFileDrop: true,
 	})
 	service.mainWindow = mainWindow
+	mainWindow.OnWindowEvent(events.Common.WindowRuntimeReady, func(_ *application.WindowEvent) { service.applyWindowIcons() })
 	mainWindow.OnWindowEvent(events.Common.WindowClosing, service.beforeMainClose)
 	mainWindow.OnWindowEvent(events.Common.WindowFilesDropped, func(event *application.WindowEvent) {
 		service.handleDroppedImages("main", event)

@@ -22,6 +22,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	"github.com/wailsapp/wails/v3/pkg/w32"
 	htmlnode "golang.org/x/net/html"
 	win "golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -102,6 +103,8 @@ type App struct {
 	lockGroup  string
 	closeReady bool
 	detached   map[string]*detachedWindow
+	iconSmall  w32.HICON
+	iconLarge  w32.HICON
 }
 
 func NewApp() *App { return &App{detached: map[string]*detachedWindow{}} }
@@ -118,6 +121,7 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 		a.normalize()
 	}
 	a.stripContents()
+	a.applyWindowIcons()
 	return nil
 }
 func (a *App) beforeMainClose(event *application.WindowEvent) {
@@ -135,6 +139,7 @@ func (a *App) shutdown() {
 	defer a.mu.Unlock()
 	_ = a.persistUnlocked()
 	a.releaseGroupUnlocked()
+	a.releaseIconsUnlocked()
 }
 func (a *App) FinishClose() {
 	a.mu.Lock()
@@ -584,13 +589,14 @@ func (a *App) OpenDetachedNote(noteID, title string) error {
 	x, y := a.mainWindow.Position()
 	w, _ := a.mainWindow.Size()
 	detached := a.wails.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name: "note-" + noteID, Title: title, Width: 760, Height: 680, MinWidth: 480, MinHeight: 360,
+		Name: "note-" + noteID, Title: title, Width: 760, Height: 680, MinWidth: 480, MinHeight: 360, Frameless: true,
 		URL: "/detached.html?note=" + url.QueryEscape(noteID), InitialPosition: application.WindowXY,
 		X: x + w + 18, Y: y + 60, BackgroundColour: application.NewRGBA(30, 31, 34, 255), EnableFileDrop: true,
 	})
 	entry := &detachedWindow{window: detached, createdAt: time.Now()}
 	a.mu.Lock()
 	a.detached[noteID] = entry
+	a.applyWindowIconUnlocked(detached)
 	a.mu.Unlock()
 	detached.OnWindowEvent(events.Common.WindowClosing, func(_ *application.WindowEvent) {
 		a.mu.Lock()

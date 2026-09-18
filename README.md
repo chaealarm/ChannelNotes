@@ -16,6 +16,7 @@ Channel Notes는 Discord에서 영감을 받은 그룹·채널·카테고리 구
 - 프로세스 간 그룹 잠금과 그룹 단위 병합 저장
 - 여러 메모를 전환하는 편집기 탭과 순서 변경
 - 탭을 창 밖으로 끌어 분리 편집하고 메인 창 상단으로 되돌려 합치기
+- 앱 UI와 조화되는 프레임리스 창 제목 표시줄 및 사용자 지정 PNG 창 아이콘
 
 ## 요구 사항
 
@@ -47,10 +48,13 @@ cd frontend
 npm install
 npm run build
 cd ..
+wails3 generate icons -input build/appicon.png -windowsfilename build/windows/icon.ico
+wails3 generate syso -arch amd64 -icon build/windows/icon.ico -manifest build/windows/wails.exe.manifest -info build/windows/info.json -out wails_windows_amd64.syso
 go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o ChannelNotes.exe .
 ```
 
 완성된 실행 파일은 프로젝트 루트의 `ChannelNotes.exe`입니다. 반드시 `production` 빌드 태그를 포함해야 합니다. 태그 없는 `go build`는 Wails 애플리케이션을 정상 구성하지 않습니다.
+기본 실행 파일 아이콘은 `build/appicon.png`에서 생성합니다. 설정에서 선택한 PNG 아이콘은 `%AppData%\ChannelNotes\program-icon.png`에 저장되며 실행 중 창과 제목 표시줄에 적용됩니다. 이미 빌드된 EXE 자체의 아이콘 리소스는 변경되지 않습니다.
 
 ## 데이터 저장 위치
 
@@ -72,5 +76,4 @@ go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgu
 중요한 데이터를 이동하거나 대규모로 정리하기 전에는 설정의 **전체 백업**을 권장합니다. 그룹 단위 이동에는 **선택 그룹 백업**과 **그룹 복원**을 사용할 수 있습니다. 복원된 그룹은 기존 그룹과 충돌하지 않도록 새 식별자로 추가됩니다.
 
 생성형 AI를 이용하여 작성된 코드
-
 Special Thanks to Yw
