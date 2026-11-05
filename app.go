@@ -71,6 +71,9 @@ type Store struct {
 	HideNotes        bool      `json:"hideNotes"`
 	OpenNoteIDs      []string  `json:"openNoteIds"`
 	ImageInsertWidth int       `json:"imageInsertWidth"`
+	LimitTabs        bool      `json:"limitTabs"`
+	MaxTabs          int       `json:"maxTabs"`
+	TabLimitPolicy   string    `json:"tabLimitPolicy"`
 	SettingsVersion  int       `json:"settingsVersion"`
 }
 type ImageData struct {
@@ -149,7 +152,7 @@ func (a *App) FinishClose() {
 }
 func defaultStore() Store {
 	gid, cid, catid, nid := newID(), newID(), newID(), newID()
-	return Store{Groups: []Group{{ID: gid, Name: "기본 그룹"}}, Channels: []Channel{{ID: cid, Name: "내 채널", GroupID: gid, Categories: []Category{{ID: catid, Name: "메모장", Notes: []Note{{ID: nid, Title: "새 메모", Name: "새 메모", TitleLinked: true, Content: "<p>여기에 내용을 입력하세요.</p>", ContentLoaded: true}}}}}}, LastGroupID: gid, LastChannelID: cid, LastCategoryID: catid, LastNoteID: nid, Theme: "dark", ShowGroupPopup: true, PeriodicAutoSave: true, ImageInsertWidth: 100, SettingsVersion: 2}
+	return Store{Groups: []Group{{ID: gid, Name: "기본 그룹"}}, Channels: []Channel{{ID: cid, Name: "내 채널", GroupID: gid, Categories: []Category{{ID: catid, Name: "메모장", Notes: []Note{{ID: nid, Title: "새 메모", Name: "새 메모", TitleLinked: true, Content: "<p>여기에 내용을 입력하세요.</p>", ContentLoaded: true}}}}}}, LastGroupID: gid, LastChannelID: cid, LastCategoryID: catid, LastNoteID: nid, Theme: "dark", ShowGroupPopup: true, PeriodicAutoSave: true, ImageInsertWidth: 100, LimitTabs: false, MaxTabs: 5, TabLimitPolicy: "oldest", SettingsVersion: 3}
 }
 
 func (a *App) normalize() {
@@ -160,6 +163,24 @@ func (a *App) normalize() {
 	if a.store.SettingsVersion < 2 {
 		a.store.PeriodicAutoSave = true
 		a.store.SettingsVersion = 2
+	}
+	if a.store.SettingsVersion < 3 {
+		if a.store.MaxTabs < 1 {
+			a.store.MaxTabs = 5
+		}
+		if a.store.TabLimitPolicy == "" {
+			a.store.TabLimitPolicy = "oldest"
+		}
+		a.store.SettingsVersion = 3
+	}
+	if a.store.MaxTabs < 1 {
+		a.store.MaxTabs = 5
+	}
+	if a.store.MaxTabs > 99 {
+		a.store.MaxTabs = 99
+	}
+	if a.store.TabLimitPolicy != "newest" {
+		a.store.TabLimitPolicy = "oldest"
 	}
 	if a.store.Theme == "" {
 		a.store.Theme = "dark"
@@ -450,6 +471,10 @@ func (a *App) MoveChannelToGroup(channelID, targetGroupID string, s Store) (Stor
 	loaded.HideChannels = s.HideChannels
 	loaded.HideNotes = s.HideNotes
 	loaded.OpenNoteIDs = s.OpenNoteIDs
+	loaded.ImageInsertWidth = s.ImageInsertWidth
+	loaded.LimitTabs = s.LimitTabs
+	loaded.MaxTabs = s.MaxTabs
+	loaded.TabLimitPolicy = s.TabLimitPolicy
 	loaded.SettingsVersion = s.SettingsVersion
 	loaded.LastGroupID = s.LastGroupID
 	loaded.LastChannelID = s.LastChannelID

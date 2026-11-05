@@ -10,6 +10,9 @@ func TestFolderStoreRoundTripAndLazyContent(t *testing.T) {
 	dir := t.TempDir()
 	s := defaultStore()
 	s.ImageInsertWidth = 37
+	s.LimitTabs = true
+	s.MaxTabs = 3
+	s.TabLimitPolicy = "newest"
 	n := &s.Channels[0].Categories[0].Notes[0]
 	n.ContentLoaded = true
 	n.Content = "<h1>folder storage</h1>"
@@ -24,6 +27,9 @@ func TestFolderStoreRoundTripAndLazyContent(t *testing.T) {
 	if loaded.ImageInsertWidth != 37 {
 		t.Fatalf("image insert width was not persisted: %d", loaded.ImageInsertWidth)
 	}
+	if !loaded.LimitTabs || loaded.MaxTabs != 3 || loaded.TabLimitPolicy != "newest" {
+		t.Fatalf("tab limit settings were not persisted: %+v", loaded)
+	}
 	if got.Content != "" || got.ContentLoaded {
 		t.Fatal("metadata load eagerly loaded note content")
 	}
@@ -37,6 +43,23 @@ func TestFolderStoreRoundTripAndLazyContent(t *testing.T) {
 	expected := filepath.Join(dataRoot(dir), "groups", s.Groups[0].ID, "channels", s.Channels[0].ID, "categories", s.Channels[0].Categories[0].ID, "notes", n.ID, "content.html")
 	if _, err = os.Stat(expected); err != nil {
 		t.Fatalf("folder hierarchy missing: %v", err)
+	}
+}
+
+func TestNormalizeTabLimitDefaults(t *testing.T) {
+	a := &App{store: Store{SettingsVersion: 2}}
+	a.normalize()
+	if a.store.LimitTabs {
+		t.Fatal("tab limit must be disabled by default")
+	}
+	if a.store.MaxTabs != 5 {
+		t.Fatalf("expected default max tabs 5, got %d", a.store.MaxTabs)
+	}
+	if a.store.TabLimitPolicy != "oldest" {
+		t.Fatalf("expected default policy oldest, got %q", a.store.TabLimitPolicy)
+	}
+	if a.store.SettingsVersion != 3 {
+		t.Fatalf("expected settings version 3, got %d", a.store.SettingsVersion)
 	}
 }
 

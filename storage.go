@@ -23,6 +23,9 @@ type settingsFile struct {
 	HideNotes        bool     `json:"hideNotes"`
 	OpenNoteIDs      []string `json:"openNoteIds"`
 	ImageInsertWidth int      `json:"imageInsertWidth"`
+	LimitTabs        bool     `json:"limitTabs"`
+	MaxTabs          int      `json:"maxTabs"`
+	TabLimitPolicy   string   `json:"tabLimitPolicy"`
 	SettingsVersion  int      `json:"settingsVersion"`
 }
 
@@ -65,7 +68,7 @@ func loadFolderStore(dir string) (Store, error) {
 	// must never decide whether the user's group data exists: an interrupted
 	// write or a transient read failure used to make startup create a second
 	// default store beside perfectly valid group folders.
-	s := Store{Theme: "dark", ShowGroupPopup: true, PeriodicAutoSave: true, ImageInsertWidth: 100, SettingsVersion: 2}
+	s := Store{Theme: "dark", ShowGroupPopup: true, PeriodicAutoSave: true, ImageInsertWidth: 100, MaxTabs: 5, TabLimitPolicy: "oldest", SettingsVersion: 3}
 	_ = readJSON(filepath.Join(dataRoot(dir), "settings.json"), &s)
 	groupsDir := filepath.Join(dataRoot(dir), "groups")
 	ges, err := os.ReadDir(groupsDir)
