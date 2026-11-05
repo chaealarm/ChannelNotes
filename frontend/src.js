@@ -1,6 +1,7 @@
 import "./style.css";
 import { Call, Events } from "/wails/runtime.js";
 import { mountWindowChrome } from "./windowChrome.js";
+import { installImeAnchorGuard, requestImeAnchor } from "./imeAnchor.js";
 const apiObject=new Proxy({}, {get:(_,method)=>(...args)=>Call.ByName(`main.App.${String(method)}`,...args)});
 const api = () => apiObject,
   $ = (s) => document.querySelector(s),
@@ -10,7 +11,7 @@ const api = () => apiObject,
       /[&<>\"]/g,
       (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
     );
-let store = { groups: [], channels: [], lastGroupId: "", lastChannelId: "", lastNoteId: "", theme: "dark" },
+let store = { groups: [], channels: [], lastGroupId: "", lastChannelId: "", lastNoteId: "", theme: "dark", limitTabs: false, maxTabs: 5, tabLimitPolicy: "oldest" },
   saveTimer,
   dirty = false,
   selectedImage = null,
@@ -22,6 +23,8 @@ let closeHandlerRegistered=false;
 let dragItem=null, suppressClickUntil=0;
 let tabDragId="", savedEditorRange=null;
 const detachedTabs=new Set();
+const tabOpenSeq=new Map();
+let tabOpenSeqNext=0;
 const channel = () =>
     store.channels.find((c) => c.id === store.lastChannelId) ||
     store.channels[0],
@@ -44,11 +47,13 @@ const newNote = () => ({
 function withoutLegacyTitle(content,title){const box=document.createElement("div");box.innerHTML=content||"";const first=box.firstElementChild;if(first?.tagName==="H1"&&first.textContent.trim()===(title||"").trim())first.remove();return box.innerHTML||"<p></p>"}
 $("#app").innerHTML = `<div class="shell"><aside class="rail"><button class="settings-icon" id="openSettings" title="설정">⚙</button><div id="channels"></div><button class="round" id="addChannel">＋</button></aside><aside class="sidebar"><header><strong id="channelName"></strong></header><div class="section-head"><button id="toggleNotes">⌄ 메모장</button><div><button id="bulkDelete" title="여러 메모 삭제">🗑</button><button id="addNote">＋</button></div></div><div id="bulkBar"><span id="selectedCount">0개 선택</span><button id="deleteSelected">삭제</button><button id="cancelSelect">취소</button></div><div id="notes"></div></aside><main><header class="top"><input id="title"><button id="export">내보내기</button></header><div class="toolbar"><button data-cmd="bold"><b>B</b></button><button data-cmd="italic"><i>I</i></button><button data-cmd="underline"><u>U</u></button><select id="textColor" title="텍스트 색상"><option value="default">기본색</option><option value="red">빨강</option><option value="orange">주황</option><option value="green">초록</option><option value="blue">파랑</option><option value="purple">보라</option></select><select id="font"></select><div class="size-box"><input id="size" type="number" min="6" max="144" value="10"><span>pt</span><div class="size-presets">${[8,9,10,11,12,14,16,18,20,24].map(x=>`<button data-size="${x}">${x}</button>`).join("")}</div></div><button id="image">이미지 삽입</button><div id="imageTools"><input id="imageWidth" type="number" min="5" max="100" value="100"><span>%</span><button data-align="left">왼쪽</button><button data-align="center">가운데</button><button data-align="right">오른쪽</button></div></div><div class="editor-wrap"><div id="editor" contenteditable="true" spellcheck="true"></div><div id="resizeBox"><i data-handle="nw"></i><i data-handle="ne"></i><i data-handle="sw"></i><i data-handle="se"></i></div></div><footer><span id="status">준비됨</span><span>이미지 붙여넣기·드래그 지원</span></footer></main></div><div id="context" class="context-menu"></div><div id="modal" class="modal"><div class="dialog"><header><h2>설정</h2><button id="closeSettings">×</button></header><section><label>테마</label><select id="theme"><option value="system">시스템 설정에 따르기</option><option value="dark">어두운 테마</option><option value="light">밝은 테마</option></select></section><section><h3>데이터 관리</h3><div class="settings-actions"><button id="backup">전체 백업</button><button id="restore">전체 복원</button></div></section></div></div><div id="askModal" class="modal"><div class="dialog ask-dialog"><header><h2 id="askTitle"></h2></header><section><p id="askMessage"></p><input id="askInput"><div class="ask-actions"><button id="askCancel">취소</button><button id="askOK">확인</button></div></section></div></div>`;
 mountWindowChrome($("#app"), "main", api());
+installImeAnchorGuard();
 $("#theme").parentElement.insertAdjacentHTML("afterend", '<section class="program-icon-setting"><label>프로그램 아이콘</label><div class="program-icon-row"><img id="programIconPreview" alt="현재 프로그램 아이콘"><button id="chooseProgramIcon">아이콘 변경</button><button id="resetProgramIcon">기본 아이콘</button></div><small>PNG 파일 · 16~2048픽셀 · 최대 5 MB</small></section>');
 api().GetProgramIcon().then(src => { $("#programIconPreview").src = src; }).catch(() => {});
 Events.On("program:icon", event => { $("#programIconPreview").src = event.data; });
 $("#chooseProgramIcon").onclick = async () => { try { const src = await api().ChooseProgramIcon(); if (src) $("#programIconPreview").src = src; } catch (error) { $("#status").textContent = "아이콘 변경 실패: " + error; } };
 $("#resetProgramIcon").onclick = async () => { try { $("#programIconPreview").src = await api().ResetProgramIcon(); } catch (error) { $("#status").textContent = "아이콘 초기화 실패: " + error; } };
+$(".program-icon-setting").insertAdjacentHTML("afterend", '<section class="tab-limit-setting"><h3>탭 개수 제한</h3><label class="setting-check"><input id="limitTabs" type="checkbox"> 탭 개수 제한 사용</label><div class="tab-limit-fields"><label>최대 탭 개수<input id="maxTabs" type="number" min="1" max="99" value="5"></label><label>최대 개수에서 추가로 열 때 닫을 탭<select id="tabLimitPolicy"><option value="oldest">먼저 연 탭 닫기</option><option value="newest">나중에 연 탭 닫기</option></select></label></div><p class="setting-help">제한을 켜면 새 탭을 열 때 선택한 기준의 탭이 자동으로 닫히며, 닫히는 탭은 먼저 저장됩니다.</p></section>');
 $("#editor").setAttribute("data-file-drop-target", "");
 $("#export").textContent = "다른 위치에 저장";
 $(".top").insertAdjacentHTML("afterbegin", '<button id="toggleChannelsPane" title="채널 영역 숨기기">☰</button><button id="toggleNotesPane" title="카테고리·메모 영역 숨기기">▤</button>');
@@ -75,6 +80,9 @@ function normalize() {
     store.lastChannelId = store.channels[0].id;
   }
   store.theme ||= "dark";
+  store.limitTabs = store.limitTabs === true;
+  store.maxTabs = Math.max(1, Math.min(99, Math.round(+store.maxTabs || 5)));
+  store.tabLimitPolicy = store.tabLimitPolicy === "newest" ? "newest" : "oldest";
   for (const c of store.channels) {
     c.image ??= "";
     c.groupId ||= store.groups[0].id;
@@ -92,12 +100,20 @@ function normalize() {
   const groupIDs=new Set(store.channels.filter(c=>c.groupId===store.lastGroupId).flatMap(c=>c.categories.flatMap(g=>g.notes.map(n=>n.id))));
   store.openNoteIds=(store.openNoteIds||[]).filter(nid=>groupIDs.has(nid));
   if(store.lastNoteId&&!store.openNoteIds.includes(store.lastNoteId))store.openNoteIds.push(store.lastNoteId);
+  syncTabOpenSeq();
 }
 function applyTheme() {
   document.documentElement.dataset.theme = store.theme;
   $("#theme").value = store.theme;
   $("#showGroupPopup").checked=store.showGroupPopup!==false;
   $("#periodicAutoSave").checked=store.periodicAutoSave!==false;
+  if($("#limitTabs")){
+    $("#limitTabs").checked=store.limitTabs===true;
+    $("#maxTabs").value=Math.max(1,Math.min(99,Math.round(+store.maxTabs||5)));
+    $("#tabLimitPolicy").value=store.tabLimitPolicy==="newest"?"newest":"oldest";
+    $("#maxTabs").disabled=store.limitTabs!==true;
+    $("#tabLimitPolicy").disabled=store.limitTabs!==true;
+  }
 }
 function render() {
   normalize();
@@ -131,7 +147,9 @@ function render() {
   $("#editor").contentEditable=detachedTabs.has(n.id)?"false":"true";
   $(".editor-wrap").classList.toggle("detached-current",detachedTabs.has(n.id));
   if(n.contentLoaded)n.content=withoutLegacyTitle(n.content,n.title);
+  const editorHadFocus=document.activeElement===$("#editor");
   $("#editor").innerHTML = n.content || "";
+  if(editorHadFocus)requestImeAnchor();
   ensureNoteLoaded(n.id);
   selectedImage = null;
   imageTools();
@@ -342,7 +360,7 @@ async function switchChannel(cid) {
   store.lastChannelId = cid;
   store.lastCategoryId = channel().categories[0]?.id || "";
   store.lastNoteId = allNotes()[0]?.id || "";
-  openTab(store.lastNoteId);
+  await openTab(store.lastNoteId);
   render();
   mark();
 }
@@ -350,7 +368,7 @@ async function switchNote(nid) {
   await save();
   const previous=note();if(previous&&previous.id!==nid){previous.content="";previous.contentLoaded=false}
   store.lastNoteId = nid;
-  openTab(nid);
+  await openTab(nid);
   const owner=channel().categories.find(g=>g.notes.some(n=>n.id===nid));
   if(owner) store.lastCategoryId=owner.id;
   render();
@@ -360,7 +378,48 @@ function noteRecord(nid){
   for(const c of store.channels)if(c.groupId===store.lastGroupId)for(const cat of c.categories||[]){const n=(cat.notes||[]).find(n=>n.id===nid);if(n)return{channel:c,category:cat,note:n}}
   return null;
 }
-function openTab(nid){if(nid&&!store.openNoteIds.includes(nid))store.openNoteIds.push(nid)}
+function tabLimitMax(){return Math.max(1,Math.min(99,Math.round(+store.maxTabs||5)))}
+function syncTabOpenSeq(){
+  const open=new Set(store.openNoteIds||[]);
+  for(const nid of open)if(!tabOpenSeq.has(nid))tabOpenSeq.set(nid,++tabOpenSeqNext);
+  for(const nid of [...tabOpenSeq.keys()])if(!open.has(nid))tabOpenSeq.delete(nid);
+}
+function closeTabsForLimit(protectedIds){
+  if(store.limitTabs!==true)return [];
+  syncTabOpenSeq();
+  const max=tabLimitMax(),removed=[],protectedSet=protectedIds instanceof Set?protectedIds:new Set(Array.isArray(protectedIds)?protectedIds:[protectedIds].filter(Boolean));
+  while(store.openNoteIds.length>max){
+    const candidates=store.openNoteIds.filter(nid=>!protectedSet.has(nid)&&!detachedTabs.has(nid));
+    if(!candidates.length)break;
+    let victim=candidates[0];
+    for(const nid of candidates){
+      const a=tabOpenSeq.get(nid)??0,b=tabOpenSeq.get(victim)??0;
+      if(store.tabLimitPolicy==="newest"?a>b:a<b)victim=nid;
+    }
+    store.openNoteIds=store.openNoteIds.filter(nid=>nid!==victim);
+    tabOpenSeq.delete(victim);
+    removed.push(victim);
+  }
+  return removed;
+}
+async function persistTabState(){
+  try{const t=await api().SaveStore(store);dirty=false;$("#status").textContent=`${t} · 자동저장 완료`}catch(e){$("#status").textContent="저장 실패: "+e}
+}
+async function openTab(nid){
+  if(!nid||store.openNoteIds.includes(nid))return [];
+  store.openNoteIds.push(nid);
+  tabOpenSeq.set(nid,++tabOpenSeqNext);
+  if(store.limitTabs!==true)return [];
+  await save();
+  const removed=closeTabsForLimit(new Set([nid,store.lastNoteId]));
+  if(removed.length){
+    renderTabs();
+    dirty=true;
+    clearTimeout(saveTimer);
+    await persistTabState();
+  }
+  return removed;
+}
 function renderTabs(){
   const tabs=$("#tabs");
   tabs.innerHTML=store.openNoteIds.map(nid=>{const r=noteRecord(nid);if(!r)return'';return `<div class="memo-tab ${nid===store.lastNoteId?'active':''} ${detachedTabs.has(nid)?'detached':''}" draggable="true" data-id="${nid}" title="${esc(r.note.title)}"><span>${esc(r.note.name||r.note.title)}</span>${detachedTabs.has(nid)?'<i title="분리된 창에서 편집 중">↗</i>':'<button title="탭 닫기">×</button>'}</div>`}).join('');
@@ -380,9 +439,9 @@ async function switchTab(nid){
   await save();const previous=note();if(previous&&previous.id!==nid){previous.content='';previous.contentLoaded=false}
   store.lastChannelId=r.channel.id;store.lastCategoryId=r.category.id;store.lastNoteId=nid;render();mark();
 }
-function closeTab(nid){
-  const index=store.openNoteIds.indexOf(nid);store.openNoteIds=store.openNoteIds.filter(id=>id!==nid);
-  if(store.lastNoteId===nid){const next=store.openNoteIds[Math.min(index,store.openNoteIds.length-1)];if(next)return switchTab(next);openTab(nid)}
+async function closeTab(nid){
+  const index=store.openNoteIds.indexOf(nid);store.openNoteIds=store.openNoteIds.filter(id=>id!==nid);tabOpenSeq.delete(nid);
+  if(store.lastNoteId===nid){const next=store.openNoteIds[Math.min(index,store.openNoteIds.length-1)];if(next)return switchTab(next);await openTab(nid)}
   renderTabs();mark();
 }
 async function detachTab(nid){
@@ -399,7 +458,7 @@ function capture() {
 }
 async function ensureNoteLoaded(nid) {
   const target=allNotes().find(n=>n.id===nid);if(!target||target.contentLoaded)return;
-  try{const content=await api().LoadNoteContent(nid);if(note()?.id!==nid)return;target.content=withoutLegacyTitle(content,target.title);target.contentLoaded=true;$("#editor").innerHTML=target.content;if(target.content!==content)mark()}catch(e){$("#status").textContent="메모 로딩 실패: "+e}
+  try{const content=await api().LoadNoteContent(nid);if(note()?.id!==nid)return;target.content=withoutLegacyTitle(content,target.title);target.contentLoaded=true;const editorHadFocus=document.activeElement===$("#editor");$("#editor").innerHTML=target.content;if(editorHadFocus)requestImeAnchor();if(target.content!==content)mark()}catch(e){$("#status").textContent="메모 로딩 실패: "+e}
 }
 function mark() {
   dirty = true;
@@ -548,7 +607,10 @@ async function deleteCategory(gid) {
   if(!(await ask("카테고리 삭제",`‘${g.name}’ 카테고리와 포함된 메모 ${g.notes.length}개를 삭제할까요?`)))return;
   c.categories=c.categories.filter(x=>x.id!==gid);
   if(store.lastCategoryId===gid)store.lastCategoryId=c.categories[0].id;
+  store.openNoteIds=(store.openNoteIds||[]).filter(id=>!g.notes.some(n=>n.id===id));
+  for(const deletedNote of g.notes)tabOpenSeq.delete(deletedNote.id);
   if(g.notes.some(n=>n.id===store.lastNoteId))store.lastNoteId=allNotes()[0]?.id||"";
+  // openNoteIds에 들어간 삭제 대상이 남으면 normalize()가 되살리므로 함께 정리합니다.
   render();mark();
 }
 async function deleteChannel(cid) {
@@ -562,6 +624,7 @@ async function deleteChannel(cid) {
     store.lastCategoryId = next.categories[0]?.id || "";
     store.lastNoteId = next.categories.flatMap(g=>g.notes)[0]?.id || "";
   }
+  store.openNoteIds=(store.openNoteIds||[]).filter(id=>noteRecord(id));
   render();
   mark();
 }
@@ -570,6 +633,8 @@ async function deleteNote(nid) {
   if (allNotes().length === 1) return ask("삭제할 수 없음", "마지막 메모장은 삭제할 수 없습니다.");
   if (!(await ask("메모장 삭제", "이 메모장을 삭제할까요?"))) return;
   for(const g of c.categories)g.notes=g.notes.filter(x=>x.id!==nid);
+  store.openNoteIds=(store.openNoteIds||[]).filter(id=>id!==nid);
+  tabOpenSeq.delete(nid);
   if (store.lastNoteId === nid) store.lastNoteId = allNotes()[0].id;
   render();
   mark();
@@ -587,7 +652,11 @@ $("#deleteSelected").onclick = async () => {
   if (!selectedNotes.size) return ask("선택 필요", "삭제할 메모장을 선택하세요.");
   if (allNotes().length - selectedNotes.size < 1) return ask("삭제할 수 없음", "채널에는 메모장이 하나 이상 있어야 합니다.");
   if (!(await ask("여러 메모장 삭제", `선택한 ${selectedNotes.size}개 메모장을 삭제할까요?`))) return;
-  for(const g of c.categories)g.notes=g.notes.filter(n=>!selectedNotes.has(n.id));
+  for(const g of c.categories){
+    for(const deletedNote of g.notes.filter(n=>selectedNotes.has(n.id))) tabOpenSeq.delete(deletedNote.id);
+    g.notes=g.notes.filter(n=>!selectedNotes.has(n.id));
+  }
+  store.openNoteIds=(store.openNoteIds||[]).filter(id=>!selectedNotes.has(id));
   if (selectedNotes.has(store.lastNoteId)) store.lastNoteId = allNotes()[0].id;
   selectedNotes.clear(); selectMode = false; render(); mark(); await save();
 };
@@ -682,6 +751,7 @@ $("#addChannel").onclick = async () => {
   store.lastChannelId = c.id;
   store.lastCategoryId = g.id;
   store.lastNoteId = g.notes[0].id;
+  await openTab(store.lastNoteId);
   render();
   mark();
 };
@@ -697,6 +767,7 @@ async function addNote(gid) {
   g.notes.push(n);
   store.lastCategoryId=g.id;
   store.lastNoteId = n.id;
+  await openTab(n.id);
   render();
   mark();
 }
@@ -825,8 +896,42 @@ $("#theme").onchange = (e) => {
   applyTheme();
   mark();
 };
-$("#showGroupPopup").onchange=async(e)=>{store.showGroupPopup=e.target.checked;store.settingsVersion=2;dirty=true;clearTimeout(saveTimer);await save()};
-$("#periodicAutoSave").onchange=async(e)=>{store.periodicAutoSave=e.target.checked;store.settingsVersion=2;dirty=true;clearTimeout(saveTimer);await save()};
+$("#showGroupPopup").onchange=async(e)=>{store.showGroupPopup=e.target.checked;store.settingsVersion=3;dirty=true;clearTimeout(saveTimer);await save()};
+$("#periodicAutoSave").onchange=async(e)=>{store.periodicAutoSave=e.target.checked;store.settingsVersion=3;dirty=true;clearTimeout(saveTimer);await save()};
+async function enforceTabLimitNow(){
+  if(store.limitTabs!==true)return;
+  syncTabOpenSeq();
+  if(store.openNoteIds.length<=tabLimitMax())return;
+  if(dirty)await save();
+  const removed=closeTabsForLimit(store.lastNoteId);
+  if(!removed.length)return;
+  renderTabs();
+  dirty=true;
+  clearTimeout(saveTimer);
+  await persistTabState();
+  $("#status").textContent+=" · 탭 "+removed.length+"개 자동 닫힘";
+}
+$("#limitTabs").onchange=async(e)=>{
+  store.limitTabs=e.target.checked;
+  store.settingsVersion=3;
+  dirty=true;clearTimeout(saveTimer);applyTheme();
+  await save();
+  await enforceTabLimitNow();
+};
+$("#maxTabs").onchange=async(e)=>{
+  store.maxTabs=Math.max(1,Math.min(99,Math.round(+e.target.value||5)));
+  e.target.value=store.maxTabs;
+  store.settingsVersion=3;
+  dirty=true;clearTimeout(saveTimer);
+  await save();
+  await enforceTabLimitNow();
+};
+$("#tabLimitPolicy").onchange=async(e)=>{
+  store.tabLimitPolicy=e.target.value==="newest"?"newest":"oldest";
+  store.settingsVersion=3;
+  dirty=true;clearTimeout(saveTimer);
+  await save();
+};
 async function showStartupGroups(){
   const locked=new Set(await api().LockedGroups()),box=$("#startupGroups");
   box.innerHTML=store.groups.map(g=>`<button data-id="${g.id}" ${locked.has(g.id)?'disabled':''}><b>${esc(g.name)}</b><small>${locked.has(g.id)?'다른 창에서 작업 중':'선택하여 편집 시작'}</small></button>`).join('')+'<button id="startupAddGroup" class="startup-add"><b>＋ 새 그룹 생성</b><small>새 작업 공간을 만들어 시작합니다</small></button>';
@@ -863,7 +968,7 @@ function searchArgs(){return [$("#searchQuery").value,$("#searchScope").value,st
 function openSearch(){$("#searchModal").classList.add("show");setTimeout(()=>$("#searchQuery").focus(),0)}
 $("#openSearch").onclick=openSearch;$("#closeSearch").onclick=()=>$("#searchModal").classList.remove("show");$("#searchModal").onclick=e=>{if(e.target.id==="searchModal")e.currentTarget.classList.remove("show")};
 async function runSearch(){await save();const [q,scope,gid,cid,catid,nid]=searchArgs();if(!q.trim())return;const results=await api().SearchNotes(q,scope,gid,cid,catid,nid);const total=(results||[]).reduce((a,x)=>a+x.matches,0);$("#searchSummary").textContent=`${results?.length||0}개 메모에서 ${total}건 찾음`;$("#searchResults").innerHTML=(results||[]).map((r,i)=>`<button data-i="${i}"><b>${esc(r.noteName)}</b><small>${esc(r.groupName)} / ${esc(r.channelName)} / ${esc(r.categoryName)} · ${r.matches}건</small><span>${esc(r.snippet)}</span></button>`).join('');$("#searchResults").querySelectorAll('button').forEach(b=>b.onclick=()=>openSearchResult(results[+b.dataset.i]))}
-async function openSearchResult(r){if(r.groupId!==store.lastGroupId)await selectGroup(r.groupId);store.lastChannelId=r.channelId;store.lastCategoryId=r.categoryId;store.lastNoteId=r.noteId;$("#searchModal").classList.remove("show");render();mark()}
+async function openSearchResult(r){if(r.groupId!==store.lastGroupId)await selectGroup(r.groupId);store.lastChannelId=r.channelId;store.lastCategoryId=r.categoryId;store.lastNoteId=r.noteId;await openTab(r.noteId);$("#searchModal").classList.remove("show");render();mark()}
 $("#runSearch").onclick=runSearch;$("#searchQuery").onkeydown=e=>{if(e.key==="Enter")runSearch()};
 $("#runReplace").onclick=async()=>{const [q,scope,gid,cid,catid,nid]=searchArgs(),repl=$("#replaceText").value;if(!q.trim())return;if(!(await ask("범위 내 모두 바꾸기",`‘${q}’ 텍스트를 모두 바꿀까요?`)))return;await save();const result=await api().ReplaceNotes(q,repl,scope,gid,cid,catid,nid);const current=note();if(current){current.content="";current.contentLoaded=false}render();const skipped=(result.skippedGroups||[]).map(id=>store.groups.find(g=>g.id===id)?.name||id);$("#searchSummary").textContent=`${result.files}개 메모에서 ${result.replacements}건 변경${skipped.length?' · 작업 중이라 제외: '+skipped.join(', '):''}`;await runSearch()};
 document.addEventListener("keydown",e=>{if(!(e.ctrlKey||e.metaKey))return;const key=e.key.toLowerCase();if(key==="s"){e.preventDefault();manualSave()}else if(key==="f"){e.preventDefault();openSearch()}});
@@ -873,6 +978,7 @@ $("#import").onclick = async () => {
   await save();
   category().notes.push(imported);
   store.lastNoteId = imported.id;
+  await openTab(imported.id);
   render();
   mark();
   $("#status").textContent = "메모 불러오기 완료";
@@ -888,7 +994,7 @@ async function boot() {
     if(!closeHandlerRegistered){
       closeHandlerRegistered=true;
       Events.On("app:before-close",async()=>{capture();dirty=true;clearTimeout(saveTimer);try{const t=await api().SaveStore(store);dirty=false;$("#status").textContent=`${t} · 종료 전 저장 완료`;await api().FinishClose()}catch(e){$("#status").textContent="종료 전 저장 실패: "+e}});
-      Events.On("note:reattach",event=>{const nid=event.data;detachedTabs.delete(nid);openTab(nid);render();mark();$("#status").textContent='분리된 메모가 탭으로 돌아왔습니다.'});
+      Events.On("note:reattach",async event=>{const nid=event.data;detachedTabs.delete(nid);await openTab(nid);render();mark();$("#status").textContent='분리된 메모가 탭으로 돌아왔습니다.'});
       Events.On("note:updated",event=>{const data=event.data||{},r=noteRecord(data.noteId);if(!r)return;r.note.title=data.title||r.note.title;if(r.note.titleLinked)r.note.name=r.note.title;r.note.content=data.content;r.note.contentLoaded=true;if(!dirty||store.lastNoteId!==data.noteId){if(store.lastNoteId===data.noteId)render();else renderTabs()}});
       Events.On("editor:images-dropped",event=>{const data=event.data||{};if(data.target!=="main")return;placeEditorCaretAt(data.x,data.y);insertImages(data.images||[])});
       Events.On("image:insert-width",event=>{const width=+event.data;if(width>=5&&width<=100)store.imageInsertWidth=width});

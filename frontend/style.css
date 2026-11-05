@@ -216,6 +216,13 @@ select {
 .setting-check { display:flex !important; align-items:center; gap:8px; margin-top:14px; color:var(--text) !important; }
 .setting-check input { accent-color:var(--accent); }
 .setting-help { margin:6px 0 0 24px; color:var(--muted); font-size:11px; line-height:1.5; }
+.tab-limit-setting h3 { margin-bottom:12px; }
+.tab-limit-fields { display:grid; gap:10px; margin-top:14px; }
+.tab-limit-fields label { display:grid; gap:6px; color:var(--muted); font-size:12px; }
+.tab-limit-fields input,
+.tab-limit-fields select { width:100%; height:34px; border:1px solid var(--line); border-radius:4px; padding:0 9px; background:var(--main); color:var(--text); }
+.tab-limit-fields input:disabled,
+.tab-limit-fields select:disabled { opacity:.45; cursor:not-allowed; }
 .group-dialog { width:min(460px,calc(100% - 32px)); }
 .group-dialog section>p { margin-top:0; color:var(--muted); }
 #startupGroups { display:grid; gap:7px; max-height:55vh; overflow-y:auto; }
@@ -652,6 +659,18 @@ footer {
   border-radius: 8px;
   box-shadow: 0 20px 60px #0008;
   overflow: hidden;
+}
+#modal .dialog {
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
+#modal .dialog header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--side);
 }
 .dialog header {
   display: flex;
