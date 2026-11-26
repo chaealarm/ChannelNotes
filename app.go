@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,7 +23,6 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 	"github.com/wailsapp/wails/v3/pkg/w32"
 	htmlnode "golang.org/x/net/html"
-	win "golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -289,19 +287,10 @@ func (a *App) LoadNoteContent(noteID string) (string, error) {
 	defer a.mu.Unlock()
 	return loadNoteFolder(a.dir, a.store, noteID)
 }
-func processAlive(pid int) bool {
-	h, err := win.OpenProcess(win.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
-	if err != nil {
-		return false
-	}
-	win.CloseHandle(h)
-	return true
-}
 func (a *App) lockPath(gid string) string { return filepath.Join(a.dir, "locks", gid+".lock") }
 func (a *App) releaseGroupUnlocked() {
 	if a.lockFile != nil {
-		a.lockFile.Close()
-		_ = os.Remove(a.lockPath(a.lockGroup))
+		releaseGroupLock(a.lockFile, a.lockPath(a.lockGroup))
 		a.lockFile = nil
 		a.lockGroup = ""
 	}
@@ -312,27 +301,10 @@ func (a *App) AcquireGroup(gid string) error {
 	if gid == a.lockGroup {
 		return nil
 	}
-	path := a.lockPath(gid)
-	try := func() (*os.File, error) { return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644) }
-	f, err := try()
-	if err != nil {
-		b, _ := os.ReadFile(path)
-		pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-		if pid > 0 && processAlive(pid) {
-			return errors.New("다른 창에서 사용 중인 그룹입니다")
-		}
-		_ = os.Remove(path)
-		f, err = try()
-	}
+	f, err := acquireGroupLock(a.lockPath(gid))
 	if err != nil {
 		return err
 	}
-	if _, err = f.WriteString(strconv.Itoa(os.Getpid())); err != nil {
-		f.Close()
-		_ = os.Remove(path)
-		return err
-	}
-	_ = f.Sync()
 	a.releaseGroupUnlocked()
 	a.lockFile = f
 	a.lockGroup = gid
@@ -352,42 +324,15 @@ func (a *App) LockedGroups() []string {
 		if gid == a.lockGroup {
 			continue
 		}
-		b, _ := os.ReadFile(filepath.Join(a.dir, "locks", e.Name()))
-		pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-		if pid > 0 && processAlive(pid) {
+		if groupLockHeld(filepath.Join(a.dir, "locks", e.Name())) {
 			result = append(result, gid)
-		} else {
-			_ = os.Remove(filepath.Join(a.dir, "locks", e.Name()))
 		}
 	}
 	return result
 }
 
 func (a *App) acquireAdditionalGroupUnlocked(gid string) (*os.File, error) {
-	path := a.lockPath(gid)
-	open := func() (*os.File, error) {
-		return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-	}
-	f, err := open()
-	if err != nil {
-		b, _ := os.ReadFile(path)
-		pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-		if pid > 0 && processAlive(pid) {
-			return nil, errors.New("다른 창에서 사용 중인 그룹입니다")
-		}
-		_ = os.Remove(path)
-		f, err = open()
-	}
-	if err != nil {
-		return nil, err
-	}
-	if _, err = f.WriteString(strconv.Itoa(os.Getpid())); err != nil {
-		f.Close()
-		_ = os.Remove(path)
-		return nil, err
-	}
-	_ = f.Sync()
-	return f, nil
+	return acquireGroupLock(a.lockPath(gid))
 }
 
 // MoveChannelToGroup moves the channel directory while holding both the
@@ -437,10 +382,7 @@ func (a *App) MoveChannelToGroup(channelID, targetGroupID string, s Store) (Stor
 	if err != nil {
 		return s, err
 	}
-	defer func() {
-		targetLock.Close()
-		_ = os.Remove(a.lockPath(targetGroupID))
-	}()
+	defer releaseGroupLock(targetLock, a.lockPath(targetGroupID))
 
 	sourcePath := channelPath(a.dir, a.lockGroup, channelID)
 	targetPath := channelPath(a.dir, targetGroupID, channelID)

@@ -152,7 +152,7 @@ function render() {
   if(editorHadFocus)requestImeAnchor();
   ensureNoteLoaded(n.id);
   selectedImage = null;
-  imageTools();
+  syncImageSelection();
   document.querySelectorAll(".channel").forEach((b) => {
     b.onclick = () => Date.now() < suppressClickUntil || switchChannel(b.dataset.id);
     b.oncontextmenu = (e) => channelMenu(e, b.dataset.id);
@@ -448,17 +448,39 @@ async function detachTab(nid){
   const r=noteRecord(nid);if(!r)return;await save();
   try{await api().OpenDetachedNote(nid,r.note.title);detachedTabs.add(nid);render();$("#status").textContent='메모를 별도 창으로 분리했습니다.'}catch(e){await ask('창 분리 실패',String(e))}
 }
+// The "selected" outline is UI state only. It must never be saved, and an
+// image that was cut and pasted back (its clipboard HTML carries the class)
+// must not keep it.
+function stripImageSelection(root, keep = null) {
+  root.querySelectorAll("img.selected").forEach((img) => {
+    if (img === keep) return;
+    img.classList.remove("selected");
+    if (!img.className) img.removeAttribute("class");
+  });
+}
+function editorHTML() {
+  const clone = $("#editor").cloneNode(true);
+  stripImageSelection(clone);
+  return clone.innerHTML;
+}
+function syncImageSelection() {
+  if (selectedImage && !$("#editor").contains(selectedImage)) {
+    selectedImage = null;
+  }
+  stripImageSelection($("#editor"), selectedImage);
+  imageTools();
+}
 function capture() {
   const n = note();
   if (!n) return;
   n.title = $("#title").value.trim() || "제목 없음";
-  if(n.contentLoaded) n.content = $("#editor").innerHTML;
+  if(n.contentLoaded) n.content = editorHTML();
   if (n.titleLinked) n.name = n.title;
   dirty = true;
 }
 async function ensureNoteLoaded(nid) {
   const target=allNotes().find(n=>n.id===nid);if(!target||target.contentLoaded)return;
-  try{const content=await api().LoadNoteContent(nid);if(note()?.id!==nid)return;target.content=withoutLegacyTitle(content,target.title);target.contentLoaded=true;const editorHadFocus=document.activeElement===$("#editor");$("#editor").innerHTML=target.content;if(editorHadFocus)requestImeAnchor();if(target.content!==content)mark()}catch(e){$("#status").textContent="메모 로딩 실패: "+e}
+  try{const content=await api().LoadNoteContent(nid);if(note()?.id!==nid)return;target.content=withoutLegacyTitle(content,target.title);target.contentLoaded=true;const editorHadFocus=document.activeElement===$("#editor");$("#editor").innerHTML=target.content;selectedImage=null;syncImageSelection();if(editorHadFocus)requestImeAnchor();if(target.content!==content)mark()}catch(e){$("#status").textContent="메모 로딩 실패: "+e}
 }
 function mark() {
   dirty = true;
@@ -675,6 +697,7 @@ $("#title").oninput = () => {
   mark();
 };
 $("#editor").oninput = () => {
+  syncImageSelection();
   capture();
   mark();
 };

@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -73,12 +72,13 @@ func TestMoveChannelToGroupRejectsLockedTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.ReleaseGroup()
-	if err := os.WriteFile(a.lockPath("target-group"), []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+	held, err := acquireGroupLock(a.lockPath("target-group"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(a.lockPath("target-group"))
+	defer releaseGroupLock(held, a.lockPath("target-group"))
 
-	_, err := a.MoveChannelToGroup("moving-channel", "target-group", s)
+	_, err = a.MoveChannelToGroup("moving-channel", "target-group", s)
 	if err == nil || !strings.Contains(err.Error(), "다른 창") {
 		t.Fatalf("expected locked-group rejection, got %v", err)
 	}
