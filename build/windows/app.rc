@@ -1,0 +1,27 @@
+#pragma code_page(65001)
+1 ICON "icon.ico"
+1 24 "app.manifest"
+1 VERSIONINFO
+FILEVERSION 1,2,3,0
+PRODUCTVERSION 1,2,3,0
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "041204B0"
+    BEGIN
+      VALUE "CompanyName", "Chaealarm"
+      VALUE "FileDescription", "Channel Notes"
+      VALUE "FileVersion", "1.2.3"
+      VALUE "InternalName", "ChannelNotes"
+      VALUE "OriginalFilename", "ChannelNotes.exe"
+      VALUE "ProductName", "Channel Notes"
+      VALUE "ProductVersion", "1.2.3"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0412, 1200
+  END
+END
